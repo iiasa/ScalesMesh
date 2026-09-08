@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import os
+from typing import Optional
 
 import numpy as np
 import torch
@@ -11,7 +12,14 @@ import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import Dataset, DataLoader
 
-import scales.model.model_utils as utils
+import scales.model.ssm_model_utils as utils
+
+
+# Maximum EMA decay rate for the emission reservoir, after the sigmoid on
+# log_alpha. Fixed rather than configurable: it rescales the learned log_alpha,
+# so a value that differs from the one used at training time silently changes
+# the meaning of a checkpoint's weights.
+ALPHA_MAX = 0.002
 
 
 # ---------------------------------------------------------------------------
@@ -218,8 +226,13 @@ class DeepSSMPatternConditioned(nn.Module):
         p(z_t | z_{t-1}, u_t)  —  MLP([z_{t-1}, u_t]) -> (mu_p, logvar_p)
 
     Emission for target y:
-        p(y_t | z_t)  —  MLP(z_t) -> low-rank Multivariate Normal
-                         parameterised by (mean, cov_factor [D, r], cov_diag [D])
+        p(y_t | z_t)  —  MLP(z_t) -> Gaussian over the D output channels.
+                         cov_rank > 0: low-rank Multivariate Normal
+                             parameterised by (mean, cov_factor [D, r], cov_diag [D]),
+                             capturing cross-channel correlation.
+                         cov_rank = 0: diagonal Normal parameterised by
+                             (mean, cov_diag [D]); channels are conditionally
+                             independent given z.
 
     Emission for precipitation pr:
         p(pr_t | z_t)  —  MLP(z_t) -> Sinh-Arcsinh flow params
@@ -250,7 +263,6 @@ class DeepSSMPatternConditioned(nn.Module):
         reservoir_dim: int = 2,
         init_alpha: float = 0.01,
         init_omega: float = 1.0,
-        alpha_max: float = 0.02,
         cov_rank: int = 5,
     ) -> None:
         """
@@ -268,8 +280,9 @@ class DeepSSMPatternConditioned(nn.Module):
             reservoir_dim:    Number of EMA reservoir states per output channel.
             init_alpha:       Initial EMA decay rate (before sigmoid scaling).
             init_omega:       Unused placeholder (reserved for future use).
-            alpha_max:        Maximum EMA decay rate after sigmoid.
             cov_rank:         Rank r of the low-rank covariance factor for y.
+                              0 selects a purely diagonal emission, which drops
+                              the factor block from the emit head entirely.
         """
         super().__init__()
         self.y_dim            = y_dim
@@ -279,7 +292,7 @@ class DeepSSMPatternConditioned(nn.Module):
         self.use_linear_model = use_linear_model
         self.u_rnn_hidden     = u_rnn_hidden
         self.reservoir_dim    = reservoir_dim
-        self.alpha_max        = alpha_max
+        self.alpha_max        = ALPHA_MAX
         self.cov_rank         = cov_rank
 
         # Inference network: encodes [y_t, u_t] sequence -> per-step posterior params.
@@ -303,6 +316,7 @@ class DeepSSMPatternConditioned(nn.Module):
         emit_in = z_dim + (u_rnn_hidden + y_dim * reservoir_dim if emission_uses_u else 0)
 
         # y emission: outputs mean (D) + log_cov_diag (D) + cov_factor (D*r).
+        # With cov_rank=0 the factor block has width 0, leaving a 2*D diagonal head.
         self.emit    = utils.MLP(emit_in, y_dim * (2 + cov_rank), hidden=mlp_hidden)
         # pr emission: outputs 4 Sinh-Arcsinh parameters per output channel.
         self.emit_pr = utils.MLP(emit_in, 4 * y_dim, hidden=230)
@@ -342,8 +356,11 @@ class DeepSSMPatternConditioned(nn.Module):
 
     def _parse_emit(
         self, emit_out: torch.Tensor, B: int
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, Optional[torch.Tensor], torch.Tensor]:
         """Split the raw y-emission MLP output into (mean, cov_factor, cov_diag).
+
+        The output layout is fixed as [mean (D) | log_cov_diag (D) | factor (D*r)]
+        so a checkpoint's emit head keeps its meaning across ranks.
 
         Args:
             emit_out: Raw MLP output.  Shape [B, D*(2+r)].
@@ -351,16 +368,50 @@ class DeepSSMPatternConditioned(nn.Module):
 
         Returns:
             res:        Residual mean.            Shape [B, D].
-            cov_factor: Low-rank factor L.        Shape [B, D, r].
+            cov_factor: Low-rank factor L.        Shape [B, D, r],
+                        or None when cov_rank == 0 (diagonal emission).
             cov_diag:   Positive diagonal term.   Shape [B, D].
         """
         D, r       = self.y_dim, self.cov_rank
         res        = emit_out[:, :D]
         log_diag   = emit_out[:, D:2*D]
-        factor_raw = emit_out[:, 2*D:]
         cov_diag   = F.softplus(log_diag) + self.eps   # enforce positivity
-        cov_factor = factor_raw.reshape(B, D, r)
+        # Rank 0 leaves no factor block to read; the emission is diagonal.
+        cov_factor = emit_out[:, 2*D:].reshape(B, D, r) if r > 0 else None
         return res, cov_factor, cov_diag
+
+    def _emission_dist(
+        self,
+        y_hat: torch.Tensor,
+        cov_factor: Optional[torch.Tensor],
+        cov_diag: torch.Tensor,
+    ) -> torch.distributions.Distribution:
+        """Build the Gaussian emission p(y_t | z_t) for the configured cov_rank.
+
+        cov_rank > 0 gives a low-rank Multivariate Normal with covariance
+        L L^T + diag(cov_diag), which models correlation between output
+        channels. cov_rank = 0 gives an independent Normal per channel; the
+        `Independent` wrapper reinterprets the channel axis as part of the
+        event, so `log_prob` sums over D and returns [B] — matching the
+        low-rank branch, as does `sample()` returning [B, D].
+
+        Args:
+            y_hat:      Emission mean.               Shape [B, D].
+            cov_factor: Low-rank factor, or None.    Shape [B, D, r].
+            cov_diag:   Positive diagonal variance.  Shape [B, D].
+
+        Returns:
+            A distribution over [B, D] whose log_prob has shape [B].
+        """
+        if self.cov_rank > 0:
+            return torch.distributions.LowRankMultivariateNormal(
+                loc=y_hat, cov_factor=cov_factor, cov_diag=cov_diag)
+
+        # cov_diag holds variances, so the Normal scale is its square root.
+        return torch.distributions.Independent(
+            torch.distributions.Normal(loc=y_hat, scale=torch.sqrt(cov_diag)),
+            reinterpreted_batch_ndims=1,
+        )
 
     def forward_elbo(
         self,
@@ -425,8 +476,7 @@ class DeepSSMPatternConditioned(nn.Module):
             emit_out            = self.emit(e_in)
             res, cov_factor, cov_diag = self._parse_emit(emit_out, B)
             y_hat               = ctrl + res if self.use_linear_model else res
-            dist_y              = torch.distributions.LowRankMultivariateNormal(
-                                      loc=y_hat, cov_factor=cov_factor, cov_diag=cov_diag)
+            dist_y              = self._emission_dist(y_hat, cov_factor, cov_diag)
             nll = nll + (-dist_y.log_prob(y[:, t]))
 
             # pr emission: Sinh-Arcsinh flow.
@@ -532,8 +582,7 @@ class DeepSSMPatternConditioned(nn.Module):
                 sigma_pr = torch.exp(log_sigma_t) + self.eps
                 x_samp   = mu_t + sigma_pr * torch.randn_like(mu_t)
 
-                dist_y = torch.distributions.LowRankMultivariateNormal(
-                    loc=y_hat, cov_factor=cov_factor, cov_diag=cov_diag)
+                dist_y = self._emission_dist(y_hat, cov_factor, cov_diag)
                 preds.append(dist_y.sample())
                 preds_pr.append(sinh_arcsinh_forward(x_samp, eps_skew_t, log_delta_t, eps=self.eps))
 
@@ -809,7 +858,6 @@ def run_train(
     rnn_hidden: int = 62,
     use_linear_model: bool = True,
     resevoir_dim: int = 2,
-    alpha_max: float = 0.02,
     cov_rank: int = 5,
     run_dir: str | None = None,
     weights_file: str | None = None,
@@ -845,8 +893,8 @@ def run_train(
         rnn_hidden:       Inference GRU hidden size.
         use_linear_model: Whether to include the ridge-initialised linear head.
         resevoir_dim:     EMA reservoir dimension per output channel.
-        alpha_max:        Maximum EMA decay rate.
-        cov_rank:         Rank of the low-rank covariance factor.
+        cov_rank:         Rank of the low-rank covariance factor; 0 for a
+                          diagonal y emission.
         run_dir:          If provided, scalers and checkpoints are saved here.
         weights_file:     If provided, model weights are warm-started from this path.
 
@@ -901,7 +949,7 @@ def run_train(
     raw_model = DeepSSMPatternConditioned(
         y_dim=Dy, u_dim=Du, z_dim=z_dim, rnn_hidden=rnn_hidden,
         use_linear_model=use_linear_model, emission_uses_u=True,
-        reservoir_dim=resevoir_dim, alpha_max=alpha_max, cov_rank=cov_rank,
+        reservoir_dim=resevoir_dim, cov_rank=cov_rank,
     ).to(device)
 
     if weights_file is not None:
