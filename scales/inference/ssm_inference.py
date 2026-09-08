@@ -33,14 +33,13 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 import torch
 
 from scales.model.ssm_model_utils import StandardScaler
 from scales.model.ssm_tas_pr import DeepSSMPatternConditioned
-
 
 # Feature counts of the SCALES setup: tas (and pr) are resolved over 58
 # regions, and gmt is a single global scalar per time step. The time axis is
@@ -192,8 +191,8 @@ class SSMForecaster:
         tas_scaler: StandardScaler,
         gmt_scaler: StandardScaler,
         pr_scaler: StandardScaler,
-        device: Optional[torch.device] = None,
-        expected_dims: Optional[tuple[int, int]] = EXPECTED_DIMS,
+        device: torch.device | None = None,
+        expected_dims: tuple[int, int] | None = EXPECTED_DIMS,
     ) -> None:
         """
         Args:
@@ -251,9 +250,9 @@ class SSMForecaster:
         tas_scaler_path: str,
         gmt_scaler_path: str,
         pr_scaler_path: str,
-        device: Optional[torch.device] = None,
-        expected_dims: Optional[tuple[int, int]] = EXPECTED_DIMS,
-        model_kwargs: Optional[dict[str, Any]] = None,
+        device: torch.device | None = None,
+        expected_dims: tuple[int, int] | None = EXPECTED_DIMS,
+        model_kwargs: dict[str, Any] | None = None,
         strict: bool = True,
     ) -> SSMForecaster:
         """Load a model checkpoint and the three scalers from disk.
@@ -369,7 +368,7 @@ class SSMForecaster:
         self,
         gmt: np.ndarray,
         tas_context: np.ndarray,
-        horizon: Optional[int] = None,
+        horizon: int | None = None,
         n_samples: int = 50,
         deterministic: bool = False,
     ) -> ForecastResult:
@@ -466,12 +465,12 @@ def forecast_from_checkpoint(
     pr_scaler_path: str,
     gmt: np.ndarray,
     tas_context: np.ndarray,
-    horizon: Optional[int] = None,
+    horizon: int | None = None,
     n_samples: int = 50,
     deterministic: bool = False,
-    device: Optional[torch.device] = None,
-    expected_dims: Optional[tuple[int, int]] = EXPECTED_DIMS,
-    model_kwargs: Optional[dict[str, Any]] = None,
+    device: torch.device | None = None,
+    expected_dims: tuple[int, int] | None = EXPECTED_DIMS,
+    model_kwargs: dict[str, Any] | None = None,
 ) -> ForecastResult:
     """One-shot convenience wrapper: load, normalise and forecast.
 

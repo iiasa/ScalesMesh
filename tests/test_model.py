@@ -12,7 +12,6 @@ import torch
 from scales.model.ssm_model_utils import diag_gaussian_kl
 from scales.model.ssm_tas_pr import DeepSSMPatternConditioned
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

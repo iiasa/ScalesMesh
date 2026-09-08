@@ -23,7 +23,6 @@ from scales.inference.ssm_inference import infer_model_config
 from scales.model.ssm_model_utils import StandardScaler
 from scales.model.ssm_tas_pr import DeepSSMPatternConditioned
 
-
 Dy, Du = 2, 1
 Tc, H = 12, 6
 
@@ -33,12 +32,12 @@ Tc, H = 12, 6
 # ---------------------------------------------------------------------------
 
 def small_model(**overrides) -> DeepSSMPatternConditioned:
-    kwargs = dict(
-        y_dim=Dy, u_dim=Du, z_dim=4,
-        rnn_hidden=8, u_rnn_hidden=6, mlp_hidden=16,
-        emission_uses_u=True, use_linear_model=True,
-        reservoir_dim=2, cov_rank=2,
-    )
+    kwargs = {
+        "y_dim": Dy, "u_dim": Du, "z_dim": 4,
+        "rnn_hidden": 8, "u_rnn_hidden": 6, "mlp_hidden": 16,
+        "emission_uses_u": True, "use_linear_model": True,
+        "reservoir_dim": 2, "cov_rank": 2,
+    }
     kwargs.update(overrides)
     return DeepSSMPatternConditioned(**kwargs)
 

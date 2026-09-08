@@ -1,14 +1,11 @@
 from __future__ import annotations
 
-import math
 import os
 import pickle
-from typing import Optional
 
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.data import Dataset, DataLoader
 
 
 class StandardScaler:
@@ -23,8 +20,8 @@ class StandardScaler:
     def __init__(self, eps: float = 1e-6) -> None:
         self.eps: float = eps
         # Set by fit(); None until then.
-        self.mean_: Optional[np.ndarray] = None
-        self.std_: Optional[np.ndarray] = None
+        self.mean_: np.ndarray | None = None
+        self.std_: np.ndarray | None = None
 
     def fit(self, x: np.ndarray) -> StandardScaler:
         """Compute and store per-feature mean and std from x [N, T, D]."""

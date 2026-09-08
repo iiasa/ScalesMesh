@@ -1,0 +1,39 @@
+# Pre-commit hooks for ScalesMesh.
+#
+# Install once per clone:   pre-commit install
+# Run against everything:   pre-commit run --all-files
+#
+# Rule configuration lives in pyproject.toml under [tool.ruff]; this file only
+# says when the tools run.
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: debug-statements          # stray breakpoint() / pdb imports
+      - id: check-added-large-files   # keep checkpoints and scalers out of git
+        args: [--maxkb=1024]
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.6
+    hooks:
+      # Linting — enforced on every commit, autofixing what it safely can.
+      - id: ruff-check
+        args: [--fix]
+
+      # Formatting — check only, and off by default. `ruff format` normalises
+      # the column-aligned assignments this codebase uses for tensor-shape
+      # annotations, which would rewrite ~760 lines across most files. Run it
+      # on demand with:
+      #     pre-commit run --hook-stage manual ruff-format-check --all-files
+      # To enforce it on every commit instead, reformat the repo once with
+      # `ruff format .`, then delete the `stages:` line below.
+      - id: ruff-format
+        alias: ruff-format-check
+        args: [--check, --diff]
+        stages: [manual]

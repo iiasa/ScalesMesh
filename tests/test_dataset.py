@@ -9,7 +9,6 @@ import pytest
 
 from scales.model.ssm_tas_pr import UnifiedWindowDataset
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -136,7 +135,7 @@ class TestInputPromotion:
 
         assert len(ds_3d) == len(ds_2d)
         for i in range(len(ds_3d)):
-            for a, b in zip(ds_3d[i], ds_2d[i]):
+            for a, b in zip(ds_3d[i], ds_2d[i], strict=True):
                 np.testing.assert_array_equal(a, b)
 
 

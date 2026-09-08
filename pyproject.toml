@@ -14,7 +14,59 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+dev = [
+    "pytest>=8.0",
+    "pre-commit>=3.5",
+    "ruff>=0.14",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["scales", "mesh"]
+
+# ---------------------------------------------------------------------------
+# Linting and formatting (ruff), wired into git via .pre-commit-config.yaml
+# ---------------------------------------------------------------------------
+
+[tool.ruff]
+# The model and inference code aligns assignments and comments into columns to
+# keep the tensor-shape annotations readable, which runs long; 120 accommodates
+# that without inviting genuinely unreadable lines.
+line-length = 120
+target-version = "py310"
+extend-exclude = [".venv"]
+
+[tool.ruff.lint]
+select = [
+    "F",    # pyflakes — undefined names, unused imports and variables
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "I",    # isort — import ordering
+    "B",    # flake8-bugbear — likely bugs and footguns
+    "C4",   # flake8-comprehensions
+    "UP",   # pyupgrade — modern syntax for the target version
+]
+ignore = [
+    # The codebase deliberately puts short paired statements on one line, e.g.
+    # `if y.ndim == 2: y = y[None, ...]` when normalising input shapes.
+    "E701",  # multiple statements on one line (colon)
+    "E702",  # multiple statements on one line (semicolon)
+    # Single-letter names are the convention for matrices in the linear algebra
+    # helpers (W, b, I, U, Y), where they mirror the formulae in the docstrings.
+    "E741",  # ambiguous variable name
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests reach into private helpers (_parse_emit, _emission_dist, _as_batched) to
+# pin down internal contracts, and re-export fixtures across modules.
+"tests/*" = ["ARG001", "ARG002", "SLF001"]
+"__init__.py" = ["F401"]  # re-exports are the point of the package __init__
+
+[tool.ruff.format]
+# Not enforced on commit by default — see the note in .pre-commit-config.yaml.
+quote-style = "double"
+indent-style = "space"
+docstring-code-format = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

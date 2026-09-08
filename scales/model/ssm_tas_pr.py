@@ -2,18 +2,16 @@ from __future__ import annotations
 
 import math
 import os
-from typing import Optional
 
 import numpy as np
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
-import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader, Dataset
 
 import scales.model.ssm_model_utils as utils
-
 
 # Maximum EMA decay rate for the emission reservoir, after the sigmoid on
 # log_alpha. Fixed rather than configurable: it rescales the learned log_alpha,
@@ -246,8 +244,9 @@ class DeepSSMPatternConditioned(nn.Module):
     Optional linear control baseline (use_linear_model=True):
         A ridge-initialised linear map ctrl_lin: u_t -> y_dim is added to the
         residual emission, separating the linear control response from the
-        non-linear SSM residual. ctrl_lin is frozen for the first ~70 % of
-        training so the SSM stabilises before the baseline is allowed to adapt.
+        non-linear SSM residual. run_train freezes ctrl_lin at its ridge
+        solution for the whole run, so the SSM only ever learns the residual on
+        top of a fixed linear baseline.
     """
 
     def __init__(
@@ -322,8 +321,8 @@ class DeepSSMPatternConditioned(nn.Module):
         self.emit_pr = utils.MLP(emit_in, 4 * y_dim, hidden=230)
 
         if self.use_linear_model:
-            # Linear pattern baseline; ridge-initialised and frozen initially
-            # via load_into_ctrl_lin.
+            # Linear pattern baseline; ridge-initialised and frozen via
+            # load_into_ctrl_lin.
             self.ctrl_lin = nn.Linear(u_dim, y_dim, bias=True)
 
         self.eps = 1e-6
@@ -356,7 +355,7 @@ class DeepSSMPatternConditioned(nn.Module):
 
     def _parse_emit(
         self, emit_out: torch.Tensor, B: int
-    ) -> tuple[torch.Tensor, Optional[torch.Tensor], torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor]:
         """Split the raw y-emission MLP output into (mean, cov_factor, cov_diag).
 
         The output layout is fixed as [mean (D) | log_cov_diag (D) | factor (D*r)]
@@ -383,7 +382,7 @@ class DeepSSMPatternConditioned(nn.Module):
     def _emission_dist(
         self,
         y_hat: torch.Tensor,
-        cov_factor: Optional[torch.Tensor],
+        cov_factor: torch.Tensor | None,
         cov_diag: torch.Tensor,
     ) -> torch.distributions.Distribution:
         """Build the Gaussian emission p(y_t | z_t) for the configured cov_rank.
@@ -817,8 +816,9 @@ def load_into_ctrl_lin(
 ) -> None:
     """Copy ridge weights into model.ctrl_lin and optionally freeze the parameters.
 
-    Freezing for the first ~70 % of training lets the SSM learn to correct the
-    linear baseline before the baseline itself is free to adapt.
+    Freezing pins the linear baseline at its ridge solution so the SSM learns
+    only the residual on top of it. Pass freeze=False to let the baseline adapt
+    during training.
 
     Args:
         model:  Model instance that has ctrl_lin = nn.Linear(u_dim, y_dim).
@@ -868,7 +868,8 @@ def run_train(
       1. Initialise the distributed process group (NCCL for GPU, Gloo for CPU).
       2. Split data 80/20 into train/val by series index.
       3. Fit per-feature StandardScalers on the training split only to avoid leakage.
-      4. Optionally fit a ridge baseline and load it into ctrl_lin (frozen).
+      4. Optionally fit a ridge baseline and load it into ctrl_lin, frozen for
+         the whole run.
       5. Build sliding-window DataLoaders.
       6. Train with a composite loss:
              ELBO  = NLL_y + NLL_pr + kl_w * KL
@@ -963,16 +964,13 @@ def run_train(
     ddp_kwargs = {"device_ids": [local_rank], "output_device": local_rank} if use_cuda else {}
     model = DDP(raw_model, **ddp_kwargs)
 
-    # Only optimise parameters that have gradients (ctrl_lin starts frozen).
+    # Only optimise parameters that have gradients (ctrl_lin stays frozen).
     opt = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=2e-3)
 
     best_val, best_state        = float("inf"), None
     patience, patience_left     = 15, 15
     total_steps                 = epochs * len(train_dl)
     global_step                 = 0
-    # Unfreeze ctrl_lin after 70 % of training so the SSM stabilises first.
-    unfreeze_epoch              = int(0.7 * epochs) + 1
-    ctrl_lin_unfrozen           = False
 
     for epoch in range(1, epochs + 1):
         model.train()
@@ -1021,7 +1019,8 @@ def run_train(
             omega = 500   * frac
             gamma = 80000          # yearly trend weight — no warmup needed
 
-            loss = nll + nll_pr + kl_w * kl + alpha * roll_out_mse + omega * roll_out_mse_pr + gamma * roll_out_mse_yearly
+            loss = (nll + nll_pr + kl_w * kl + alpha * roll_out_mse
+                    + omega * roll_out_mse_pr + gamma * roll_out_mse_yearly)
 
             if global_step % 100 == 0:
                 if use_linear_model:
