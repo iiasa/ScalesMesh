@@ -175,6 +175,69 @@ def infer_model_config(state_dict: dict[str, torch.Tensor]) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Input validation
+# ---------------------------------------------------------------------------
+def _as_batched(
+    x: np.ndarray,
+    n_features: int,
+    name: str,
+    feature_label: str,
+) -> tuple[np.ndarray, bool]:
+    """Assert an input array's shape and coerce it to [B, T, D].
+
+    The time axis is free — any context length or horizon is accepted — but
+    the trailing feature axis is fixed by the model: tas and pr carry one
+    value per region, gmt one value per global series.
+
+    Accepts [T] (only when n_features == 1), [T, D] and [B, T, D].
+
+    Args:
+        x:             Input array.
+        n_features:    Required trailing dimension D.
+        name:          Argument name, used in the assertion messages.
+        feature_label: What the trailing axis counts, e.g. "regions".
+
+    Returns:
+        (batched array [B, T, D], was_unbatched)
+
+    Raises:
+        AssertionError: If x is not numeric, has the wrong rank, has a
+            trailing axis other than n_features, or has an empty time axis.
+    """
+    arr = np.asarray(x)
+    assert np.issubdtype(arr.dtype, np.number), (
+        f"{name} must be a numeric array; got dtype {arr.dtype}"
+    )
+    arr = arr.astype(np.float32, copy=False)
+
+    assert 1 <= arr.ndim <= 3, (
+        f"{name} must be 1-, 2- or 3-D ([T], [T, {n_features}] or "
+        f"[B, T, {n_features}]); got shape {arr.shape}"
+    )
+
+    if arr.ndim == 1:
+        assert n_features == 1, (
+            f"{name} is 1-D but the model expects {n_features} {feature_label}; "
+            f"pass an array of shape [T, {n_features}]"
+        )
+        arr = arr[:, None]
+
+    unbatched = arr.ndim == 2
+    if unbatched:
+        arr = arr[None, ...]
+
+    assert arr.shape[-1] == n_features, (
+        f"{name} has {arr.shape[-1]} {feature_label} but the model expects "
+        f"{n_features}; expected shape [T, {n_features}] or [B, T, {n_features}], "
+        f"got {np.shape(x)}"
+    )
+    assert arr.shape[1] > 0, f"{name} has an empty time axis; got shape {np.shape(x)}"
+    assert arr.shape[0] > 0, f"{name} has an empty batch axis; got shape {np.shape(x)}"
+
+    return arr, unbatched
+
+
+# ---------------------------------------------------------------------------
 # Forecaster
 # ---------------------------------------------------------------------------
 
@@ -299,68 +362,6 @@ class SSMForecaster:
             expected_dims=expected_dims,
         )
 
-    # -- input preparation --------------------------------------------------
-
-    @staticmethod
-    def _as_batched(
-        x: np.ndarray,
-        n_features: int,
-        name: str,
-        feature_label: str,
-    ) -> tuple[np.ndarray, bool]:
-        """Assert an input array's shape and coerce it to [B, T, D].
-
-        The time axis is free — any context length or horizon is accepted — but
-        the trailing feature axis is fixed by the model: tas and pr carry one
-        value per region, gmt one value per global series.
-
-        Accepts [T] (only when n_features == 1), [T, D] and [B, T, D].
-
-        Args:
-            x:             Input array.
-            n_features:    Required trailing dimension D.
-            name:          Argument name, used in the assertion messages.
-            feature_label: What the trailing axis counts, e.g. "regions".
-
-        Returns:
-            (batched array [B, T, D], was_unbatched)
-
-        Raises:
-            AssertionError: If x is not numeric, has the wrong rank, has a
-                trailing axis other than n_features, or has an empty time axis.
-        """
-        arr = np.asarray(x)
-        assert np.issubdtype(arr.dtype, np.number), (
-            f"{name} must be a numeric array; got dtype {arr.dtype}"
-        )
-        arr = arr.astype(np.float32, copy=False)
-
-        assert 1 <= arr.ndim <= 3, (
-            f"{name} must be 1-, 2- or 3-D ([T], [T, {n_features}] or "
-            f"[B, T, {n_features}]); got shape {arr.shape}"
-        )
-
-        if arr.ndim == 1:
-            assert n_features == 1, (
-                f"{name} is 1-D but the model expects {n_features} {feature_label}; "
-                f"pass an array of shape [T, {n_features}]"
-            )
-            arr = arr[:, None]
-
-        unbatched = arr.ndim == 2
-        if unbatched:
-            arr = arr[None, ...]
-
-        assert arr.shape[-1] == n_features, (
-            f"{name} has {arr.shape[-1]} {feature_label} but the model expects "
-            f"{n_features}; expected shape [T, {n_features}] or [B, T, {n_features}], "
-            f"got {np.shape(x)}"
-        )
-        assert arr.shape[1] > 0, f"{name} has an empty time axis; got shape {np.shape(x)}"
-        assert arr.shape[0] > 0, f"{name} has an empty batch axis; got shape {np.shape(x)}"
-
-        return arr, unbatched
-
     # -- forecasting --------------------------------------------------------
 
     @torch.no_grad()
@@ -399,9 +400,9 @@ class SSMForecaster:
                 if the batch sizes are incompatible, or if gmt does not cover
                 the context plus the requested horizon.
         """
-        gmt_all, gmt_unbatched = self._as_batched(
+        gmt_all, gmt_unbatched = _as_batched(
             gmt, self.model.u_dim, "gmt", "gmt features")
-        tas_ctx, tas_unbatched = self._as_batched(
+        tas_ctx, tas_unbatched = _as_batched(
             tas_context, self.model.y_dim, "tas_context", "tas regions")
 
         if gmt_all.shape[0] != tas_ctx.shape[0]:
