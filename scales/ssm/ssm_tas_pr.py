@@ -11,7 +11,7 @@ import torch.nn.functional as F
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, Dataset
 
-import scales.model.ssm_model_utils as utils
+import scales.ssm.ssm_model_utils as utils
 
 # Maximum EMA decay rate for the emission reservoir, after the sigmoid on
 # log_alpha. Fixed rather than configurable: it rescales the learned log_alpha,
@@ -118,12 +118,12 @@ class UnifiedWindowDataset(Dataset):
     with exogenous controls u.
 
     Item contents:
-        y_ctx:  [Tc, Dy]  target context
+        y_ctx:  [Tc, Dy]  tas context
         pr_ctx: [Tc, Dy]  precipitation context
-        u_ctx:  [Tc, Du]  control context
+        u_ctx:  [Tc, Du]  control context (GMT)
         u_fut:  [H,  Du]  control horizon (assumed known at forecast time)
         pr_fut: [H,  Dy]  precipitation horizon
-        y_fut:  [H,  Dy]  target horizon (label)
+        y_fut:  [H,  Dy]  tas horizon (label)
     """
 
     def __init__(

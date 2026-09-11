@@ -1,6 +1,6 @@
 """Conditional Neural Process (CNP) wrapper around DeepSSMPatternConditioned.
 
-The SSM in `scales.model.ssm_tas_pr` learns one shared tas/pr response to a GMT
+The SSM in `scales.ssm.ssm_tas_pr` learns one shared tas/pr response to a GMT
 forcing. Different Earth System Models (ESMs) respond differently to the same
 forcing, so this module adds a CNP that infers an ESM embedding from a context
 set of (u, tas, pr) points and uses it to modulate the SSM's emission:
@@ -37,8 +37,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
-import scales.model.ssm_model_utils as utils
-from scales.model.ssm_tas_pr import (
+import scales.ssm.ssm_model_utils as utils
+from scales.ssm.ssm_tas_pr import (
     DeepSSMPatternConditioned,
     UnifiedWindowDataset,
     sinh_arcsinh_flow_nll_conditional,

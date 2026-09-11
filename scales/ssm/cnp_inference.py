@@ -37,16 +37,16 @@ from typing import Any
 import numpy as np
 import torch
 
-from scales.cnp.cnp_ssm import DeepCnpSsmforESM
-from scales.inference.ssm_inference import (
+from scales.ssm.cnp_ssm import DeepCnpSsmforESM
+from scales.ssm.ssm_inference import (
     EXPECTED_DIMS,
     ForecastResult,
     _as_batched,
     _extract_state_dict,
     infer_model_config,
 )
-from scales.model.ssm_model_utils import StandardScaler
-from scales.model.ssm_tas_pr import DeepSSMPatternConditioned
+from scales.ssm.ssm_model_utils import StandardScaler
+from scales.ssm.ssm_tas_pr import DeepSSMPatternConditioned
 
 # Filenames written by build_task_dict / train_cnp, relative to the run dir.
 TAS_SCALER_FILE = "y_scaler.out"

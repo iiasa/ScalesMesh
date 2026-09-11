@@ -1,6 +1,6 @@
 """Checkpoint-driven inference for DeepSSMPatternConditioned.
 
-The training pipeline (`scales.model.ssm_tas_pr.run_train`) persists a model
+The training pipeline (`scales.ssm.ssm_tas_pr.run_train`) persists a model
 state dict plus three fitted `StandardScaler`s (tas, gmt, pr). This module
 glues those artefacts back together for forecasting:
 
@@ -38,8 +38,8 @@ from typing import Any
 import numpy as np
 import torch
 
-from scales.model.ssm_model_utils import StandardScaler
-from scales.model.ssm_tas_pr import DeepSSMPatternConditioned
+from scales.ssm.ssm_model_utils import StandardScaler
+from scales.ssm.ssm_tas_pr import DeepSSMPatternConditioned
 
 # Feature counts of the SCALES setup: tas (and pr) are resolved over 58
 # regions, and gmt is a single global scalar per time step. The time axis is

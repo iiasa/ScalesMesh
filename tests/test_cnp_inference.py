@@ -1,4 +1,4 @@
-"""Tests for scales.inference.cnp_inference.
+"""Tests for scales.ssm.cnp_inference.
 
 Focus:
   - Checkpoint discovery inside a run directory (final model vs epoch snapshots).
@@ -15,15 +15,15 @@ import numpy as np
 import pytest
 import torch
 
-from scales.cnp.cnp_ssm import DeepCnpSsmforESM
-from scales.inference import CnpForecaster, forecast_from_run_dir
-from scales.inference.cnp_inference import (
+from scales.ssm import CnpForecaster, forecast_from_run_dir
+from scales.ssm.cnp_inference import (
     DEFAULT_COV_RANK,
     find_checkpoint,
     infer_cnp_config,
 )
-from scales.model.ssm_model_utils import StandardScaler
-from scales.model.ssm_tas_pr import DeepSSMPatternConditioned
+from scales.ssm.cnp_ssm import DeepCnpSsmforESM
+from scales.ssm.ssm_model_utils import StandardScaler
+from scales.ssm.ssm_tas_pr import DeepSSMPatternConditioned
 
 Dy, Du = 4, 1
 Tc, H = 12, 6

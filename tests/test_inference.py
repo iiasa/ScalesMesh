@@ -1,4 +1,4 @@
-"""Tests for scales.inference.ssm_inference.
+"""Tests for scales.ssm.ssm_inference.
 
 Focus:
   - Architecture inference from a checkpoint must reconstruct the exact model
@@ -12,16 +12,16 @@ import numpy as np
 import pytest
 import torch
 
-from scales.inference import (
+from scales.ssm import (
     EXPECTED_DIMS,
     N_GMT_FEATURES,
     N_REGIONS,
     SSMForecaster,
     forecast_from_checkpoint,
 )
-from scales.inference.ssm_inference import infer_model_config
-from scales.model.ssm_model_utils import StandardScaler
-from scales.model.ssm_tas_pr import DeepSSMPatternConditioned
+from scales.ssm.ssm_inference import infer_model_config
+from scales.ssm.ssm_model_utils import StandardScaler
+from scales.ssm.ssm_tas_pr import DeepSSMPatternConditioned
 
 Dy, Du = 2, 1
 Tc, H = 12, 6

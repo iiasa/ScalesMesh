@@ -7,7 +7,7 @@ in sliding-window datasets (off-by-one counts, wrong slice offsets, shape errors
 import numpy as np
 import pytest
 
-from scales.model.ssm_tas_pr import UnifiedWindowDataset
+from scales.ssm.ssm_tas_pr import UnifiedWindowDataset
 
 # ---------------------------------------------------------------------------
 # Helpers
