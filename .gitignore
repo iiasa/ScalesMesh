@@ -38,5 +38,9 @@ htmlcov/
 .idea/
 .DS_Store
 
+# Training runs: checkpoints, scalers and configs written by
+# train_from_sims / train_cnp / run_train (see TrainConfig.out_dir)
+runs/
+
 # Logs
 *.log
