@@ -14,6 +14,8 @@ Quick start
     ens = s.sample(new_gmt_monthly, n_members=20)   # (20, 116, N)
 """
 
+from common.zenodo import download_from_zenodo
+
 from .config import Config, DataConfig, DiffusionConfig, ModelConfig, TrainConfig
 from .data import CropDataset, Normalizer, check_data, group_split
 from .diffusion import Diffusion
@@ -28,4 +30,5 @@ __all__ = [
     "Diffusion", "ScalesDiT", "build_model",
     "train_from_sims", "ScenarioSampler",
     "load_gmt", "run_inference",
+    "download_from_zenodo",
 ]

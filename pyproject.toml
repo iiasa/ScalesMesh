@@ -16,6 +16,7 @@ dependencies = [
     "netCDF4>=1.6",
     "regionmask>=0.11",
     "dask>=2024.1",
+    "requests>=2.28",
 ]
 
 [project.optional-dependencies]
@@ -26,7 +27,7 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["scales", "mesh"]
+packages = ["scales", "mesh", "common"]
 
 # ---------------------------------------------------------------------------
 # Linting and formatting (ruff), wired into git via .pre-commit-config.yaml

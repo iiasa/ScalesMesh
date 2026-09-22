@@ -27,6 +27,8 @@ from collections.abc import Sequence
 import numpy as np
 import torch
 
+from common.zenodo import download_from_zenodo
+
 from .config import Config
 from .data import Normalizer, gmt_path_features, n_gmt_features
 from .diffusion import Diffusion
@@ -54,6 +56,28 @@ class ScenarioSampler:
         diffusion = Diffusion(cfg.diffusion.n_train_steps, cfg.diffusion.schedule).to(dev)
         normalizer = Normalizer.from_state_dict(ck["normalizer"])
         return cls(model, diffusion, normalizer, cfg, dev)
+
+    # ------------------------------------------------------------------
+    @classmethod
+    def from_zenodo(
+        cls,
+        record: str | int,
+        filename: str | None = None,
+        device: str = "cuda",
+        use_ema: bool = True,
+        dest_dir: str | None = None,
+        force: bool = False,
+    ):
+        """Download a checkpoint from a Zenodo record and build a sampler from it.
+
+        ``record`` is a Zenodo record ID, DOI or URL; ``filename`` selects
+        which file to fetch if the record holds more than one. The download
+        is cached locally (under ``~/.cache/scalesmesh/zenodo`` by default)
+        and re-verified against its published checksum on later calls, so
+        repeated calls with the same record are cheap.
+        """
+        path = download_from_zenodo(record, filename=filename, dest_dir=dest_dir, force=force)
+        return cls.from_checkpoint(str(path), device=device, use_ema=use_ema)
 
     # ------------------------------------------------------------------
     def _gmt_projector(self, area_weights, gmt_target_window, n_tas):

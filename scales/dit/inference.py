@@ -1,5 +1,8 @@
 """Simple inference: sample from a trained checkpoint given a monthly GMT timeseries.
 
+The checkpoint can be a local file, or a record published on Zenodo (fetched
+and cached via :mod:`common.zenodo`).
+
 Example
 -------
     from scales.dit import ScenarioSampler, run_inference
@@ -10,6 +13,9 @@ Example
     # results: list of (1 + n_tas + n_pr, T) arrays
     #   row 0    : GMT (echoed)
     #   rows 1.. : emulated fields in physical units
+
+    # or, from a Zenodo-hosted checkpoint:
+    sampler = ScenarioSampler.from_zenodo("10.5281/zenodo.1234567", device="cpu")
 """
 
 from __future__ import annotations
@@ -18,6 +24,8 @@ import argparse
 import os
 
 import numpy as np
+
+from common.zenodo import download_from_zenodo
 
 from .sample import ScenarioSampler
 
@@ -100,8 +108,11 @@ def main() -> None:
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    p.add_argument("--checkpoint", required=True,
-                   help="path to a .pt checkpoint (best.pt or last.pt)")
+    src = p.add_mutually_exclusive_group(required=True)
+    src.add_argument("--checkpoint", help="path to a local .pt checkpoint (best.pt or last.pt)")
+    src.add_argument("--zenodo-record", help="Zenodo record ID, DOI or URL to fetch the checkpoint from")
+    p.add_argument("--zenodo-file", default=None,
+                   help="filename to fetch from --zenodo-record, if it holds more than one file")
     p.add_argument("--gmt", required=True,
                    help="monthly GMT timeseries: .npy or plain-text, length % 12 == 0")
     p.add_argument("--out", default="emulated.npy",
@@ -123,14 +134,18 @@ def main() -> None:
                         "hard-constrain the area-weighted mean of tas to the GMT")
     args = p.parse_args()
 
-    if not os.path.exists(args.checkpoint):
-        raise SystemExit(f"[fatal] checkpoint not found: {args.checkpoint}")
+    if args.zenodo_record:
+        checkpoint = str(download_from_zenodo(args.zenodo_record, filename=args.zenodo_file))
+    else:
+        checkpoint = args.checkpoint
+        if not os.path.exists(checkpoint):
+            raise SystemExit(f"[fatal] checkpoint not found: {checkpoint}")
 
     gmt = load_gmt(args.gmt)
     area_weights = np.load(args.area_weights).astype(np.float32) if args.area_weights else None
 
     results = run_inference(
-        checkpoint=args.checkpoint,
+        checkpoint=checkpoint,
         gmt_monthly=gmt,
         n_members=args.members,
         stride=args.stride,

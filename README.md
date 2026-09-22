@@ -42,8 +42,10 @@ pip install -e ".[dev]"
 ```
 
 Core dependencies: `torch`, `torchvision`, `numpy`, `xarray`, `netCDF4`,
-`dask` and `regionmask` (the last three are only needed for `mesh`, which
-reads CMIP-style NetCDF files and computes IPCC AR6 region statistics).
+`dask`, `regionmask` and `requests` (`xarray`/`netCDF4`/`dask`/`regionmask`
+are only needed for `mesh`, which reads CMIP-style NetCDF files and computes
+IPCC AR6 region statistics; `requests` is only needed to download a
+pretrained checkpoint from Zenodo, see below).
 
 ## Usage
 
@@ -74,6 +76,32 @@ python -m scales.dit.inference \
     --gmt gmt_scenario.npy \
     --members 20 --out emulated.npy
 ```
+
+#### Pretrained checkpoints (Zenodo)
+
+Pretrained SCALES DiT checkpoints are published on Zenodo. `ScenarioSampler.from_zenodo`
+(and the `--zenodo-record` CLI flag) fetch and cache a checkpoint by its
+Zenodo record — no manual download needed:
+
+```python
+from scales.dit import ScenarioSampler
+
+s = ScenarioSampler.from_zenodo("10.5281/zenodo.22899656", device="cuda")
+ens = s.sample(new_gmt_monthly, n_members=20)
+```
+
+```bash
+python -m scales.dit.inference \
+    --zenodo-record 10.5281/zenodo.22899656 \
+    --gmt gmt_scenario.npy \
+    --members 20 --out emulated.npy
+```
+
+The checkpoint is downloaded once, verified against Zenodo's published
+checksum, and cached under `~/.cache/scalesmesh/zenodo/` (override with the
+`SCALESMESH_CACHE` environment variable); later calls reuse the cached copy.
+`record` accepts a Zenodo record ID, DOI, or URL; pass `filename=` /
+`--zenodo-file` if a record ever holds more than one file.
 
 `scales/dit/evaluate.py` has diagnostics (`report`, `spread_ratio`,
 `trend_drift`, ...) for checking a trained emulator against a reference ESM
@@ -180,6 +208,10 @@ pytest
 ## Layout
 
 ```
+common/
+  zenodo.py   download_from_zenodo() -- model-agnostic; used by scales.dit
+              today, and by scales.ssm/mesh once their checkpoints are
+              published too
 scales/
   dit/    diffusion-transformer emulator (config, data, model, diffusion,
           train, sample, inference, evaluate)
