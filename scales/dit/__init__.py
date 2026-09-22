@@ -1,5 +1,5 @@
-"""MISCH-MASCH -- conditional diffusion emulator for monthly regional
-tas / pr time series from a GMT trajectory.
+"""Conditional diffusion emulator for monthly regional tas / pr time series
+from a GMT trajectory.
 
 Quick start
 -----------

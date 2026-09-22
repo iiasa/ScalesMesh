@@ -286,7 +286,7 @@ def report(gen: np.ndarray, ref: np.ndarray, n_tas: int,
             res["drift_per_century"] = float(np.polyfit(yrs, dr, 1)[0] * 100)
 
     print("=" * 62)
-    print("MISCH-MASCH diagnostics  (generated vs. reference ensemble)")
+    print("SCALES DiT diagnostics  (generated vs. reference ensemble)")
     print("=" * 62)
     for k, v in res.items():
         print(f"  {k:<26s} {v: .5g}")

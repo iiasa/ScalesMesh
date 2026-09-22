@@ -1,4 +1,4 @@
-"""Configuration objects for MISCH-MASCH.
+"""Configuration objects for the SCALES DiT emulator.
 
 This file is the single source of truth. Everything that changes behaviour
 lives here, and `run_access_esm.py` only overrides a field when you pass the
@@ -163,7 +163,7 @@ class TrainConfig:
     num_workers: int = 4
     device: str = "cuda"
     amp: bool = True
-    out_dir: str = "runs/mischmasch"
+    out_dir: str = "runs/scales_dit"
 
     # ---- validation, checkpoint selection, and failure guards ----
     #: crops used per validation pass, as a FIXED random subset drawn across

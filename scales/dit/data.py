@@ -1,4 +1,4 @@
-"""Data handling for MISCH-MASCH.
+"""Data handling for the SCALES DiT emulator.
 
 Input format
 ------------

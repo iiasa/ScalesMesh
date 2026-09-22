@@ -7,9 +7,9 @@ components:
 - **SCALES** (`scales/`) — emulates *regional, monthly* `tas`/`pr` time
   series (e.g. IPCC AR6 region means) from a GMT scenario. Two model
   families are provided:
-  - `scales.dit` ("MISCH-MASCH") — a 1-D diffusion transformer (DiT) that
-    denoises a window of monthly tokens, conditioned on the GMT history via
-    a causal encoder.
+  - `scales.dit` — a 2-D diffusion transformer (DiT) over (time, region)
+    tokens that denoises a window of monthly tas/pr values, conditioned on
+    the GMT history via a causal encoder.
   - `scales.ssm` — a deep state-space model (`DeepSSMPatternConditioned`)
     with a low-rank/diagonal Gaussian emission for `tas` and a Sinh-Arcsinh
     flow emission for `pr`, plus a Conditional Neural Process (CNP) wrapper

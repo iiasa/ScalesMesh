@@ -1,4 +1,4 @@
-"""Training loop for MISCH-MASCH.
+"""Training loop for the SCALES DiT emulator.
 
 Checkpoint selection matters more than it looks: validation loss on a run
 like this typically bottoms out well before max_steps and then rises again,
