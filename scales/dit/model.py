@@ -68,18 +68,13 @@ class RMSNorm(nn.Module):
 class SelfAttention(nn.Module):
     """Multi-head self-attention with optional QK normalisation.
 
-    QK-norm exists because of a real failure: the first 200k-step
-    ACCESS-ESM1-5 run collapsed at step ~166k -- training loss ramped 0.46 ->
-    0.83 over ~1300 steps and never recovered, with finite gradients and a
-    smoothly decaying LR throughout. That is the signature of attention
-    entropy collapse: QK logits grow until the softmax saturates toward
-    one-hot, gradients through attention vanish, and the model cannot climb
-    back out.
-
-    Normalising q and k to unit RMS before the dot product bounds the logits
-    at roughly +/- sqrt(head_dim) regardless of how large the projections
-    grow, which makes that runaway self-limiting. Costs two vectors of
-    parameters per attention layer and no measurable time.
+    Unbounded QK logits are the mechanism behind attention entropy collapse:
+    the softmax saturates toward one-hot, gradients through attention vanish,
+    and training stalls with no recovery. Normalising q and k to unit RMS
+    before the dot product bounds the logits at roughly +/- sqrt(head_dim)
+    regardless of how large the projections grow, which makes that runaway
+    self-limiting. Costs two vectors of parameters per attention layer and no
+    measurable time.
     """
 
     def __init__(self, dim: int, n_heads: int, dropout: float = 0.0,

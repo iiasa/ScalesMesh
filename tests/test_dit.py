@@ -168,8 +168,9 @@ def test_causal_gmt_encoder():
 def test_qk_norm_bounds_attention_logits():
     """QK-norm must cap the pre-softmax logits however large the inputs get.
 
-    Unbounded logit growth is the mechanism behind attention entropy collapse,
-    which is what ended the first 200k-step run at step ~166k.
+    Unbounded logit growth is the mechanism behind attention entropy collapse:
+    the softmax saturates, gradients through attention vanish, and training
+    stalls with no recovery.
     """
     import torch.nn.functional as Fn
 

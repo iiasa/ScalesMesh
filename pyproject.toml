@@ -11,6 +11,11 @@ requires-python = ">=3.10"
 dependencies = [
     "numpy>=1.24",
     "torch>=2.0",
+    "torchvision>=0.15",
+    "xarray>=2024.1",
+    "netCDF4>=1.6",
+    "regionmask>=0.11",
+    "dask>=2024.1",
 ]
 
 [project.optional-dependencies]

@@ -1,11 +1,11 @@
 """Training loop for MISCH-MASCH.
 
-Checkpoint selection matters more than it looks. On the first ACCESS-ESM1-5
-run the validation loss bottomed at step 18k of 200k and then rose for the
-rest of the run, and only ``last.pt`` existed -- so the good model was gone.
-This loop therefore tracks the best validation loss, writes ``best.pt``
-whenever it improves, stops on patience, and aborts on a collapse instead of
-grinding through 180k more steps in a worse basin.
+Checkpoint selection matters more than it looks: validation loss on a run
+like this typically bottoms out well before max_steps and then rises again,
+so keeping only a final ``last.pt`` can silently discard the best model. This
+loop tracks the best validation loss, writes ``best.pt`` whenever it
+improves, stops on patience, and aborts on a collapse instead of grinding on
+in a worse basin.
 """
 
 from __future__ import annotations

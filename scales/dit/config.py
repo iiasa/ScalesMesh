@@ -95,10 +95,9 @@ class DataConfig:
 @dataclass
 class ModelConfig:
     # ---- denoiser (1-D DiT over month tokens) ----
-    #: sized down from 256/6 after the first ACCESS-ESM1-5 run overfit: the
-    #: validation loss bottomed at step 18k of 200k. With ~sum(T)/window
-    #: effective independent samples, capacity is the binding constraint, not
-    #: optimisation.
+    #: kept modest: with only ~sum(T)/window effective independent samples,
+    #: capacity is the binding constraint here, not optimisation -- a larger
+    #: model overfits well before training converges.
     d_model: int = 192
     depth: int = 4
     n_heads: int = 8
@@ -107,9 +106,9 @@ class ModelConfig:
     max_window: int = 256  # capacity of the learned positional table
     #: normalise q and k to unit RMS before the attention dot product. This
     #: bounds the logits at ~sqrt(head_dim) however large the projections grow,
-    #: which prevents attention entropy collapse -- the failure that ended the
-    #: first 200k-step run (loss ramped 0.46 -> 0.83 over ~1300 steps at step
-    #: ~166k, finite gradients throughout, no recovery). Costs nothing.
+    #: which prevents attention entropy collapse -- unbounded logits saturate
+    #: the softmax, gradients through attention vanish, and training cannot
+    #: recover. Costs nothing.
     #: NOTE: changing this changes the state dict; checkpoints are not
     #: interchangeable between settings.
     qk_norm: bool = True
