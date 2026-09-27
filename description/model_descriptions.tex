@@ -1,0 +1,439 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{amsmath}
+\usepackage[hidelinks]{hyperref}
+
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+
+\title{SCALES-MESH: Model Descriptions}
+\author{}
+\date{\today}
+
+\begin{document}
+\maketitle
+\tableofcontents
+
+\section{Overview}
+
+SCALES-MESH provides generative emulators for regional climate fields,
+conditioned on a global mean temperature (GMT) trajectory. \textbf{SCALES}
+(\texttt{scales.dit}, \texttt{scales.ssm}) emulates \emph{regional, monthly}
+\texttt{tas}/\texttt{pr} time series (e.g.\ IPCC AR6 region means) from a GMT
+scenario. \textbf{MESH} (\texttt{mesh}) performs spatial downscaling: a
+flow-matching model that generates \emph{gridded, high-resolution}
+\texttt{tas}/\texttt{pr} fields conditioned on the corresponding region-mean
+values.
+
+In the current version, SCALES is trained and normalised on \texttt{tas}/\texttt{pr}
+\emph{anomalies}, whereas MESH is trained and normalised on \emph{absolute}
+\texttt{tas}/\texttt{pr} values. The two are therefore not directly chainable
+in this version; a future revision is planned to reconcile this and to embed
+architecture/version metadata in every checkpoint (see the project
+\texttt{README.md}).
+
+This document describes, for each model: its architecture, its
+configurable parameters and their default values, and -- where applicable
+-- the weighting of its composite training loss.
+
+\clearpage
+\section{SCALES --- DiT Emulator (\texttt{scales.dit})}
+
+\subsection{Architecture}
+
+The DiT emulator operates on one token per calendar month, with the full
+vector of regional \texttt{tas}/\texttt{pr} values as the token's channel
+dimension (a 2-D diffusion transformer over the \emph{time} and
+\emph{region} axes of the data, tokenised along time). It has two parts:
+
+\begin{itemize}
+  \item \textbf{GMT history encoder} (\texttt{GMTEncoder}): a causal
+    transformer (\texttt{PlainBlock} $\times$ \texttt{gmt\_depth}) over the
+    annual GMT history, combined with explicit causal path features
+    (10/50-year trend, cumulative GMT, peak, overshoot depth). A single
+    forward pass yields a valid conditioning vector at every year, which
+    makes long-scenario inference cheap.
+  \item \textbf{Denoiser} (\texttt{ScalesDiT}): a pre-LN transformer
+    (\texttt{DiTBlock} $\times$ \texttt{depth}) with adaLN-Zero
+    conditioning (Peebles \& Xie) on the timestep embedding, the GMT
+    conditioning vector, the calendar-month embedding and (optionally) an
+    ESM embedding. Self-attention uses QK-RMSNorm, which bounds the
+    pre-softmax logits and prevents attention entropy collapse regardless
+    of how large the query/key projections grow.
+\end{itemize}
+
+Training predicts the \emph{v}-parameterisation of a Gaussian diffusion
+process (Salimans \& Ho) under a cosine noise schedule; the loss is a
+masked MSE on $v$, averaged only over the positions the model must
+generate (the given, already-known context prefix is excluded). No
+classifier-free guidance is used: CFG systematically contracts the sample
+distribution, which for an ensemble emulator would destroy the ensemble
+spread it is meant to reproduce.
+
+\subsection{Data configuration (\texttt{DataConfig})}
+
+\begin{table}[h]
+\centering
+\caption{\texttt{scales.dit.config.DataConfig} -- default values.}
+\begin{tabular}{@{}llL{7cm}@{}}
+\toprule
+Parameter & Default & Description \\
+\midrule
+\texttt{gmt\_row}        & \texttt{0}            & Row index of the GMT series in a simulation array. \\
+\texttt{n\_tas}          & \texttt{58}           & Number of regional \texttt{tas} channels (IPCC AR6 regions). \\
+\texttt{n\_pr}           & \texttt{58}           & Number of regional \texttt{pr} channels. \\
+\texttt{start\_month}    & \texttt{0}            & Calendar month of column 0 of every simulation (0 = January). \\
+\texttt{window}          & \texttt{240}          & Months per generated window; must be a multiple of 12. \\
+\texttt{january\_start}  & \texttt{False}        & If \texttt{True}, crops always start in January; if \texttt{False}, 12$\times$ more crops are used as seasonal-phase augmentation. \\
+\texttt{pr\_transform}   & \texttt{"signed\_cbrt"} & Precipitation preprocessing; the signed cube root tames its heavy-tailed, $O(10^{-5})$ anomalies before standardisation. \\
+\texttt{context\_lengths}& derived               & Clean-prefix lengths (months) used for context-conditioned training; if empty, every multiple of 12 up to \texttt{window}$-12$ is used. \\
+\texttt{p\_no\_context}  & \texttt{0.20}         & Probability of a fully unconditional window (needed for the first window of a scenario). \\
+\texttt{val\_fraction}   & \texttt{0.15}         & Fraction of simulations held out for validation. \\
+\texttt{seed}            & \texttt{0}            & Random seed for the train/validation split. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Model configuration (\texttt{ModelConfig})}
+
+\begin{table}[h]
+\centering
+\caption{\texttt{scales.dit.config.ModelConfig} -- default values.}
+\begin{tabular}{@{}llL{7cm}@{}}
+\toprule
+Parameter & Default & Description \\
+\midrule
+\texttt{d\_model}              & \texttt{192}  & Denoiser token (hidden) dimension. \\
+\texttt{depth}                 & \texttt{4}    & Number of \texttt{DiTBlock} layers in the denoiser. \\
+\texttt{n\_heads}               & \texttt{8}    & Attention heads in the denoiser. \\
+\texttt{mlp\_ratio}             & \texttt{4.0}  & MLP hidden-width multiplier inside each block. \\
+\texttt{dropout}                & \texttt{0.1}  & Dropout probability in attention and MLP layers. \\
+\texttt{max\_window}            & \texttt{256}  & Capacity of the learned positional embedding table. \\
+\texttt{qk\_norm}               & \texttt{True} & Enables QK-RMSNorm before the attention dot product. \\
+\texttt{gmt\_d\_model}          & \texttt{128}  & GMT encoder token dimension. \\
+\texttt{gmt\_depth}             & \texttt{4}    & Number of \texttt{PlainBlock} layers in the GMT encoder. \\
+\texttt{gmt\_heads}             & \texttt{4}    & Attention heads in the GMT encoder. \\
+\texttt{gmt\_max\_years}        & \texttt{2048} & Capacity of the GMT encoder's positional table (years). \\
+\texttt{use\_elapsed\_time\_feature} & \texttt{True} & Appends elapsed-years as an explicit causal path feature. \\
+\texttt{cond\_dim}              & \texttt{512}  & Width of the pooled GMT conditioning vector. \\
+\texttt{n\_esm}                 & \texttt{1}    & Number of ESM embeddings (multi-ESM training hook; 1 = single model). \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Diffusion configuration (\texttt{DiffusionConfig})}
+
+\begin{table}[h]
+\centering
+\caption{\texttt{scales.dit.config.DiffusionConfig} -- default values.}
+\begin{tabular}{@{}llL{7cm}@{}}
+\toprule
+Parameter & Default & Description \\
+\midrule
+\texttt{n\_train\_steps}   & \texttt{1000}    & Number of diffusion timesteps used at training time. \\
+\texttt{schedule}          & \texttt{"cosine"} & Noise schedule (\texttt{"cosine"} or \texttt{"linear"}). \\
+\texttt{parameterization}  & \texttt{"v"}      & Prediction target ($v$-prediction). \\
+\texttt{sample\_steps}     & \texttt{100}      & DDIM/ancestral sampling steps at inference time. \\
+\texttt{eta}               & \texttt{1.0}      & Sampler stochasticity; 1.0 = ancestral (DDPM-like), 0.0 = deterministic DDIM. \\
+\texttt{x0\_clip}          & \texttt{None}     & Optional clamp on the predicted $x_0$; \texttt{None} preserves distribution tails. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Training configuration (\texttt{TrainConfig})}
+
+\begin{table}[h]
+\centering
+\caption{\texttt{scales.dit.config.TrainConfig} -- default values.}
+\begin{tabular}{@{}llL{7cm}@{}}
+\toprule
+Parameter & Default & Description \\
+\midrule
+\texttt{batch\_size}          & \texttt{64}     & Training batch size. \\
+\texttt{lr}                   & \texttt{2e-4}   & Peak learning rate (AdamW). \\
+\texttt{weight\_decay}        & \texttt{0.01}   & AdamW weight decay. \\
+\texttt{betas}                & \texttt{(0.9, 0.99)} & AdamW momentum coefficients. \\
+\texttt{ema\_decay}           & \texttt{0.999}  & Exponential moving average decay for evaluation/inference weights. \\
+\texttt{max\_steps}           & \texttt{25{,}000} & Total training steps; the LR cosine schedule runs over exactly this many. \\
+\texttt{warmup\_steps}        & \texttt{500}    & Linear LR warmup steps. \\
+\texttt{grad\_clip}           & \texttt{1.0}    & Gradient-norm clipping threshold. \\
+\texttt{val\_batches}         & \texttt{40}     & Crops per validation pass, drawn as a fixed random subset across all validation runs. \\
+\texttt{save\_best}           & \texttt{True}   & Write \texttt{best.pt} whenever validation loss improves. \\
+\texttt{early\_stop\_patience} & \texttt{12}    & Validations without improvement before stopping (0 disables). \\
+\texttt{spike\_abort\_ratio}  & \texttt{1.25}   & Abort if validation loss exceeds the best seen by this factor (0 disables). \\
+\texttt{skip\_nonfinite\_grads} & \texttt{True} & Skip the optimiser step if the gradient norm is non-finite. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\clearpage
+\section{SCALES --- State-Space Emulator (\texttt{scales.ssm})}
+
+\subsection{Architecture}
+
+\texttt{DeepSSMPatternConditioned} is a deep state-space model:
+
+\begin{itemize}
+  \item \textbf{Inference network} $q(z_t \mid y_{1:t}, u_{1:t})$: a GRU
+    encoder over the concatenated target/control sequence, producing
+    per-step posterior parameters $(\mu_q, \log\sigma_q^2)$.
+  \item \textbf{Prior transition} $p(z_t \mid z_{t-1}, u_t)$: an MLP over
+    $[z_{t-1}, u_t]$.
+  \item \textbf{Emission for \texttt{tas}} $p(y_t \mid z_t)$: an MLP head
+    producing either a diagonal Gaussian (\texttt{cov\_rank}~=~0) or a
+    low-rank multivariate Gaussian (\texttt{cov\_rank}~$>$~0, capturing
+    cross-region correlation).
+  \item \textbf{Emission for \texttt{pr}} $p(pr_t \mid z_t)$: an MLP head
+    producing the parameters of a conditional Sinh-Arcsinh normalising
+    flow, which captures the skewness and heavy right tail of
+    precipitation.
+  \item \textbf{Optional pattern conditioning}
+    (\texttt{emission\_uses\_u=True}): a secondary GRU over the control
+    sequence feeds a bounded EMA ``reservoir'' state into the emission
+    networks, letting emission condition on the control trajectory without
+    conflating it with the latent dynamics in $z$.
+  \item \textbf{Optional linear baseline} (\texttt{use\_linear\_model=True}):
+    a ridge-regression-initialised linear map $u_t \mapsto y_{\mathrm{dim}}$,
+    frozen for the whole run so the SSM only learns the residual on top of
+    it.
+\end{itemize}
+
+\subsection{Model parameters}
+
+\begin{table}[h]
+\centering
+\caption{\texttt{scales.ssm.ssm\_tas\_pr.DeepSSMPatternConditioned} -- default values.}
+\begin{tabular}{@{}llL{7cm}@{}}
+\toprule
+Parameter & Default & Description \\
+\midrule
+\texttt{y\_dim}          & (required)  & Dimensionality of the target \texttt{tas} (region count). \\
+\texttt{u\_dim}          & (required)  & Dimensionality of the exogenous control \texttt{u} (GMT). \\
+\texttt{z\_dim}          & \texttt{16}    & Latent state dimensionality. \\
+\texttt{rnn\_hidden}     & \texttt{62}    & Hidden size of the inference GRU. \\
+\texttt{u\_rnn\_hidden}  & \texttt{64}    & Hidden size of the control GRU (\texttt{emission\_uses\_u} only). \\
+\texttt{mlp\_hidden}     & \texttt{128}   & Hidden width of the MLP modules. \\
+\texttt{emission\_uses\_u} & \texttt{False} (class default); \texttt{True} in \texttt{run\_train} & Enable EMA-reservoir pattern conditioning of the emission. \\
+\texttt{use\_linear\_model} & \texttt{True} & Add the ridge-initialised linear control baseline. \\
+\texttt{reservoir\_dim}  & \texttt{2}     & EMA reservoir states per output channel. \\
+\texttt{init\_alpha}     & \texttt{0.01}  & Initial EMA decay rate (before sigmoid scaling). \\
+\texttt{init\_omega}     & \texttt{1.0}   & Unused placeholder, reserved for future use. \\
+\texttt{cov\_rank}       & \texttt{5}     & Rank of the low-rank \texttt{tas} covariance factor; \texttt{0} selects a diagonal emission. \\
+\texttt{ALPHA\_MAX}      & \texttt{0.002} & Upper bound on the sigmoid-scaled EMA reservoir decay rate (module constant, not a constructor argument). \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Loss function weights}
+
+The training objective (\texttt{run\_train}) is a weighted sum of the
+evidence lower bound (ELBO) and rollout error terms:
+
+\begin{equation}
+\mathcal{L}_{\mathrm{SSM}} =
+  \mathrm{NLL}_{\mathrm{tas}} + \mathrm{NLL}_{\mathrm{pr}}
+  + \lambda_{\mathrm{KL}}\,\mathrm{KL}\!\left(q \,\Vert\, p\right)
+  + \alpha \cdot \mathrm{Huber}\!\left(\hat{y}_{\mathrm{roll}}, y\right)
+  + \omega \cdot \mathrm{Huber}\!\left(\hat{pr}_{\mathrm{roll}}, pr\right)
+  + \gamma \cdot \mathrm{MSE}\!\left(\bar{y}_{\mathrm{yr,roll}}, \bar{y}_{\mathrm{yr}}\right)
+\end{equation}
+
+where $\hat{y}_{\mathrm{roll}}$/$\hat{pr}_{\mathrm{roll}}$ are the
+deterministic (mean-path) rollout forecasts and $\bar{y}_{\mathrm{yr}}$ is
+the calendar-year mean of \texttt{tas} (penalising multi-year trend error).
+$\alpha$ and $\omega$ are linearly annealed from 0 to their final value over
+the first 30\% of training steps; $\gamma$ has no warmup.
+
+\begin{table}[h]
+\centering
+\caption{\texttt{scales.ssm.ssm\_tas\_pr.run\_train} -- composite loss weights.}
+\begin{tabular}{@{}llL{7cm}@{}}
+\toprule
+Symbol & Code name & Value \\
+\midrule
+$\lambda_{\mathrm{KL}}$ & \texttt{kl\_w}  & \texttt{5} (constant) \\
+$\alpha$                & \texttt{alpha}  & \texttt{10{,}000} (final value; linear warmup over first 30\% of steps) \\
+$\omega$                & \texttt{omega}  & \texttt{500} (final value; linear warmup over first 30\% of steps) \\
+$\gamma$                & \texttt{gamma}  & \texttt{80{,}000} (constant, no warmup) \\
+--                       & \texttt{kl\_free\_bits} & \texttt{0.2}: per-step KL floor (clamped from below) to prevent posterior collapse early in training. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\clearpage
+\section{SCALES --- CNP Multi-ESM Wrapper (\texttt{scales.ssm.cnp\_ssm})}
+
+\subsection{Architecture}
+
+\texttt{DeepCnpSsmforESM} wraps a trained/trainable
+\texttt{DeepSSMPatternConditioned} with a Conditional Neural Process (CNP)
+that infers an Earth System Model (ESM) embedding from a small context set
+and uses it to modulate the SSM's emission via FiLM (Feature-wise Linear
+Modulation):
+
+\begin{center}
+context set $\to$ \texttt{ContextEncoderForCnp} $\to$ mean-aggregate $\to$
+\texttt{CnpLatentEncoder} $\to z_{\mathrm{cnp}}
+\to \gamma(z_{\mathrm{cnp}})\cdot e_{\mathrm{in}} + \beta(z_{\mathrm{cnp}}) \to$ emission
+\end{center}
+
+\texttt{ContextEncoderForCnp} encodes each context $(u, [\mathrm{tas},
+\mathrm{pr}])$ point independently (no attention, no ordering, which keeps
+the aggregation permutation-invariant); the per-point representations are
+mean-aggregated and mapped by \texttt{CnpLatentEncoder} to a reparameterised
+Gaussian latent $z_{\mathrm{cnp}}$. The FiLM scale/shift is then applied to
+the SSM's emission input at every rollout step, letting the embedding
+rescale and shift how the (shared) emission networks read the SSM state.
+Meta-learning across ESMs is driven by \texttt{build\_task\_dict} (support/query
+split per ESM) and \texttt{train\_cnp}.
+
+\subsection{Model parameters}
+
+\begin{table}[h]
+\centering
+\caption{\texttt{scales.ssm.cnp\_ssm.DeepCnpSsmforESM} and \texttt{ContextEncoderForCnp} -- parameters.}
+\begin{tabular}{@{}llL{7cm}@{}}
+\toprule
+Parameter & Default & Description \\
+\midrule
+\texttt{ssm\_model}     & (required) & The wrapped \texttt{DeepSSMPatternConditioned}. \\
+\texttt{r\_dim}         & (required) & Width of the per-context-point CNP representation. \\
+\texttt{z\_cnp\_dim}    & (required) & Width of the ESM embedding $z_{\mathrm{cnp}}$. \\
+\texttt{encoder\_hidden}& \texttt{(256, 256)} & Hidden widths of the context-encoder MLP. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[h]
+\centering
+\caption{\texttt{scales.ssm.cnp\_ssm.build\_task\_dict} -- default values.}
+\begin{tabular}{@{}llL{7cm}@{}}
+\toprule
+Parameter & Default & Description \\
+\midrule
+\texttt{context\_len}  & \texttt{600}  & Context window length $T_c$ for the sliding-window dataset. \\
+\texttt{horizon}       & \texttt{1200} & Forecast horizon $H$. \\
+\texttt{stride}        & \texttt{1}    & Step between consecutive window starts. \\
+\texttt{support\_frac} & \texttt{0.7}  & Fraction of each ESM's scenarios (by index) forming the support (training) set. \\
+\texttt{start\_mode}   & \texttt{"all"} & Window sampling mode (\texttt{"all"} or \texttt{"zero"}). \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Loss function weights}
+
+The CNP training objective (\texttt{compute\_task\_loss}, used by
+\texttt{train\_cnp}) extends the SSM objective with a KL term pulling the
+ESM-embedding posterior towards $\mathcal{N}(0, I)$:
+
+\begin{equation}
+\mathcal{L}_{\mathrm{CNP}} = \mathcal{L}_{\mathrm{SSM}}
+  + \lambda_{\mathrm{KL,CNP}} \cdot \mathrm{KL}\!\left(q(z_{\mathrm{cnp}}) \,\Vert\, \mathcal{N}(0, I)\right)
+\end{equation}
+
+\begin{table}[h]
+\centering
+\caption{\texttt{scales.ssm.cnp\_ssm.compute\_task\_loss} / \texttt{train\_cnp} -- composite loss weights.}
+\begin{tabular}{@{}llL{7cm}@{}}
+\toprule
+Symbol & Code name & Value \\
+\midrule
+$\lambda_{\mathrm{KL}}$      & \texttt{kl\_w}     & \texttt{5.0} (constant) \\
+$\lambda_{\mathrm{KL,CNP}}$  & \texttt{kl\_cnp\_w} & \texttt{1.0} (constant) \\
+$\alpha$                     & \texttt{alpha\_w}  & \texttt{10{,}000.0} (final value; linear warmup over first 30\% of steps) \\
+$\omega$                     & \texttt{omega\_w}  & \texttt{500.0} (final value; linear warmup over first 30\% of steps) \\
+$\gamma$                     & \texttt{gamma\_w}  & \texttt{80{,}000.0} (constant, no warmup) \\
+--                           & \texttt{kl\_free\_bits} & \texttt{0.2}: per-step floor on the SSM KL term. \\
+--                           & \texttt{n\_rollout\_samples} & \texttt{30}: Monte Carlo samples used for the rollout loss terms. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\clearpage
+\section{MESH --- Flow-Matching Downscaling Model (\texttt{mesh})}
+
+\subsection{Architecture}
+
+\texttt{ViTCondDiffusionSR} is a ViT/DiT-style transformer that learns a
+flow-matching model on high-resolution (HR) \texttt{tas}/\texttt{pr} fields,
+conditioned on low-resolution (LR) region-mean tokens:
+
+\begin{itemize}
+  \item The HR field is patchified into square patches and linearly
+    embedded, with a learned positional embedding added (self-attention
+    tokens).
+  \item The LR region means are encoded into tokens by a
+    \texttt{GraphEncoder} (a plain transformer encoder over the region
+    axis), with a learned positional embedding.
+  \item \texttt{depth} \texttt{TransformerBlock} layers alternate
+    self-attention over HR tokens, cross-attention from HR tokens to LR
+    tokens, and an MLP, each modulated by AdaLN conditioning on a vector
+    built from the timestep embedding and a pooled summary of the LR
+    tokens.
+  \item The output head predicts the flow-matching velocity on the
+    patchified HR field.
+\end{itemize}
+
+Training regresses the velocity field of a straight-line (linear)
+conditional flow: $x_t = (1-t)\,x_0 + t\,x_1$ with constant target velocity
+$v = x_1 - x_0$ ($x_0$ = noise, $x_1$ = the HR field). Sampling integrates
+the learned ODE with an Euler or a 2nd-order Heun solver.
+
+\subsection{Model parameters}
+
+\begin{table}[h]
+\centering
+\caption{\texttt{mesh.mesh\_vit\_flow.ViTCondDiffusionSR} -- constructor defaults, and the
+values actually used by \texttt{mesh\_vit\_flow.main()}'s training run.}
+\begin{tabular}{@{}lllL{5.5cm}@{}}
+\toprule
+Parameter & Constructor default & Used in \texttt{main()} & Description \\
+\midrule
+\texttt{in\_ch}     & \texttt{1}         & \texttt{2}          & Input/output channels (\texttt{tas} + \texttt{pr}). \\
+\texttt{dim}        & \texttt{192}       & \texttt{192}        & Transformer token (hidden) dimension. \\
+\texttt{depth}      & \texttt{8}         & \texttt{16}         & Number of \texttt{TransformerBlock} layers. \\
+\texttt{heads}      & \texttt{6}         & \texttt{6}          & Attention heads. \\
+\texttt{patch}      & \texttt{4}         & \texttt{3}          & HR patch size (square). \\
+\texttt{lr\_patch}  & \texttt{3}         & \texttt{3}          & Stored but not used in the forward pass (vestigial). \\
+\texttt{hr\_hw}     & \texttt{(28, 28)}  & \texttt{(72, 144)}  & HR field spatial shape (lat, lon), after \texttt{hr\_scale} downsampling. \\
+\texttt{lr\_regions}& \texttt{58}        & data-dependent (58 for AR6) & Number of LR region tokens. \\
+\texttt{varmax/varmin} & \texttt{350/100} & data-dependent  & Per-channel value bounds, stored as buffers (not used in the forward pass). \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[h]
+\centering
+\caption{\texttt{mesh.mesh\_vit\_flow.main()} -- training configuration.}
+\begin{tabular}{@{}llL{7cm}@{}}
+\toprule
+Parameter & Value & Description \\
+\midrule
+\texttt{batch\_size} & \texttt{128}  & Training batch size. \\
+\texttt{epochs}      & \texttt{200}  & Number of training epochs. \\
+\texttt{lr}          & \texttt{2e-4} & AdamW learning rate. \\
+weight decay         & \texttt{1e-4} & AdamW weight decay (set in \texttt{train()}). \\
+EMA decay            & \texttt{0.9999} & Exponential moving average decay for the inference weights. \\
+grad clip            & \texttt{1.0}  & Gradient-norm clipping threshold. \\
+train/val split       & \texttt{75\% / 25\%} & Sequential split of the dataset (not shuffled before splitting). \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Loss function}
+
+Unlike the SCALES SSM/CNP objectives, MESH's training loss is a single,
+unweighted term: mean-squared error between the predicted and target flow
+velocity,
+
+\begin{equation}
+\mathcal{L}_{\mathrm{MESH}} = \mathbb{E}_{x_0, t}\left[\left\Vert
+  v_\theta(x_t, t, \mathrm{lr}) - (x_1 - x_0) \right\Vert_2^2\right],
+\end{equation}
+
+computed in fp32 outside of autocast. There is no auxiliary loss term or
+weighting scheme to tabulate for this model.
+
+\end{document}

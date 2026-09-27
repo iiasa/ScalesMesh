@@ -27,6 +27,18 @@ Typical use:
     )
     out = fc.forecast(gmt, tas_context)     # gmt covers context + horizon
     out.tas_mean                            # [H, Dy] in physical units
+
+Or from a checkpoint (and its scalers) published on Zenodo (fetched and
+cached via :mod:`common.zenodo`):
+
+    fc = SSMForecaster.from_zenodo("10.5281/zenodo.22998100")
+    out = fc.forecast(gmt, tas_context)
+
+`from_zenodo` expects the record to hold one model file (any ``.pt``/``.pth``
+file) plus ``tas_scaler.out``/``gmt_scaler.out``/``pr_scaler.out``; pass the
+``*_scaler_filename`` arguments to override the names, or use
+`from_checkpoint` directly with local scaler paths for a record that
+publishes the model only.
 """
 
 from __future__ import annotations
@@ -38,6 +50,7 @@ from typing import Any
 import numpy as np
 import torch
 
+from common.zenodo import download_from_zenodo, list_files
 from scales.ssm.ssm_model_utils import StandardScaler
 from scales.ssm.ssm_tas_pr import DeepSSMPatternConditioned
 
@@ -362,6 +375,72 @@ class SSMForecaster:
             expected_dims=expected_dims,
         )
 
+    @classmethod
+    def from_zenodo(
+        cls,
+        record: str | int,
+        checkpoint_filename: str | None = None,
+        tas_scaler_filename: str = "tas_scaler.out",
+        gmt_scaler_filename: str = "gmt_scaler.out",
+        pr_scaler_filename: str = "pr_scaler.out",
+        device: torch.device | None = None,
+        expected_dims: tuple[int, int] | None = EXPECTED_DIMS,
+        model_kwargs: dict[str, Any] | None = None,
+        strict: bool = True,
+        dest_dir: str | None = None,
+        force: bool = False,
+    ) -> SSMForecaster:
+        """Download the model checkpoint and its three scalers from one Zenodo record.
+
+        ``checkpoint_filename`` selects the model file; if omitted, the sole
+        ``.pt``/``.pth`` file in the record is used. The
+        ``*_scaler_filename`` arguments default to the filenames this
+        project's own SCALES SSM Zenodo uploads use; override them if a
+        record uses different names.
+
+        Args:
+            record:              Zenodo record ID, DOI or URL.
+            checkpoint_filename: Model file to fetch; auto-detected if omitted.
+            tas_scaler_filename: Tas `StandardScaler` filename in the record.
+            gmt_scaler_filename: GMT `StandardScaler` filename in the record.
+            pr_scaler_filename:  Pr `StandardScaler` filename in the record.
+            device:              Target device; defaults to CUDA when available.
+            expected_dims:       (n_tas_regions, n_gmt_features) the checkpoint must
+                                 declare; None accepts any dimensions.
+            model_kwargs:        Overrides for the inferred constructor arguments.
+            strict:              Passed to `load_state_dict`.
+            dest_dir:            Where to cache the download; defaults to
+                                 `~/.cache/scalesmesh/zenodo/<record_id>/`.
+            force:               Re-download even if a valid cached copy exists.
+
+        Returns:
+            A ready-to-use SSMForecaster.
+        """
+        if checkpoint_filename is None:
+            candidates = [f["key"] for f in list_files(record) if f["key"].endswith((".pt", ".pth"))]
+            if len(candidates) != 1:
+                raise ValueError(
+                    f"Could not determine the checkpoint file in Zenodo record {record!r}; "
+                    f"pass `checkpoint_filename` explicitly. Candidates found: {candidates or 'none'}"
+                )
+            checkpoint_filename = candidates[0]
+
+        checkpoint_path = download_from_zenodo(record, filename=checkpoint_filename, dest_dir=dest_dir, force=force)
+        tas_scaler_path = download_from_zenodo(record, filename=tas_scaler_filename, dest_dir=dest_dir, force=force)
+        gmt_scaler_path = download_from_zenodo(record, filename=gmt_scaler_filename, dest_dir=dest_dir, force=force)
+        pr_scaler_path = download_from_zenodo(record, filename=pr_scaler_filename, dest_dir=dest_dir, force=force)
+
+        return cls.from_checkpoint(
+            str(checkpoint_path),
+            tas_scaler_path=str(tas_scaler_path),
+            gmt_scaler_path=str(gmt_scaler_path),
+            pr_scaler_path=str(pr_scaler_path),
+            device=device,
+            expected_dims=expected_dims,
+            model_kwargs=model_kwargs,
+            strict=strict,
+        )
+
     # -- forecasting --------------------------------------------------------
 
     @torch.no_grad()
@@ -501,6 +580,62 @@ def forecast_from_checkpoint(
         tas_scaler_path=tas_scaler_path,
         gmt_scaler_path=gmt_scaler_path,
         pr_scaler_path=pr_scaler_path,
+        device=device,
+        expected_dims=expected_dims,
+        model_kwargs=model_kwargs,
+    )
+    return forecaster.forecast(
+        gmt, tas_context, horizon=horizon,
+        n_samples=n_samples, deterministic=deterministic,
+    )
+
+
+def forecast_from_zenodo(
+    record: str | int,
+    gmt: np.ndarray,
+    tas_context: np.ndarray,
+    checkpoint_filename: str | None = None,
+    tas_scaler_filename: str = "tas_scaler.out",
+    gmt_scaler_filename: str = "gmt_scaler.out",
+    pr_scaler_filename: str = "pr_scaler.out",
+    horizon: int | None = None,
+    n_samples: int = 50,
+    deterministic: bool = False,
+    device: torch.device | None = None,
+    expected_dims: tuple[int, int] | None = EXPECTED_DIMS,
+    model_kwargs: dict[str, Any] | None = None,
+) -> ForecastResult:
+    """One-shot convenience wrapper: download a checkpoint and its scalers from
+    Zenodo, then normalise and forecast.
+
+    Rebuilds the forecaster on every call, so prefer `SSMForecaster.from_zenodo`
+    when forecasting repeatedly from the same record.
+
+    Args:
+        record:              Zenodo record ID, DOI or URL.
+        gmt:                 GMT timeseries covering context + horizon.
+        tas_context:         Observed tas context.
+        checkpoint_filename: Model file to fetch; auto-detected if omitted.
+        tas_scaler_filename: Tas `StandardScaler` filename in the record.
+        gmt_scaler_filename: GMT `StandardScaler` filename in the record.
+        pr_scaler_filename:  Pr `StandardScaler` filename in the record.
+        horizon:             Forecast steps; defaults to all GMT steps past the context.
+        n_samples:           Monte Carlo samples for the mean and bands.
+        deterministic:       Use the mean-path forecast instead of sampling.
+        device:              Target device; defaults to CUDA when available.
+        expected_dims:       (n_tas_regions, n_gmt_features) the checkpoint must
+                             declare; None accepts any dimensions.
+        model_kwargs:        Overrides for the inferred constructor arguments.
+
+    Returns:
+        A ForecastResult in physical units.
+    """
+    forecaster = SSMForecaster.from_zenodo(
+        record,
+        checkpoint_filename=checkpoint_filename,
+        tas_scaler_filename=tas_scaler_filename,
+        gmt_scaler_filename=gmt_scaler_filename,
+        pr_scaler_filename=pr_scaler_filename,
         device=device,
         expected_dims=expected_dims,
         model_kwargs=model_kwargs,

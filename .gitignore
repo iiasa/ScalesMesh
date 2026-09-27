@@ -44,3 +44,11 @@ runs/
 
 # Logs
 *.log
+
+# LaTeX build artifacts (description/*.tex)
+*.aux
+*.out
+*.toc
+*.fls
+*.fdb_latexmk
+*.synctex.gz

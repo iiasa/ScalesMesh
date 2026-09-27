@@ -27,6 +27,9 @@ from scales.ssm.cnp_inference import (
     forecast_from_run_dir,
     infer_cnp_config,
 )
+from scales.ssm.cnp_inference import (
+    forecast_from_zenodo as cnp_forecast_from_zenodo,
+)
 from scales.ssm.cnp_ssm import (
     CnpLatentEncoder,
     ContextEncoderForCnp,
@@ -43,6 +46,7 @@ from scales.ssm.ssm_inference import (
     ForecastResult,
     SSMForecaster,
     forecast_from_checkpoint,
+    forecast_from_zenodo,
     infer_model_config,
 )
 from scales.ssm.ssm_model_utils import MLP, StandardScaler, diag_gaussian_kl
@@ -92,11 +96,13 @@ __all__ = [
     "N_REGIONS",
     "SSMForecaster",
     "forecast_from_checkpoint",
+    "forecast_from_zenodo",
     "infer_model_config",
     # cnp_inference
     "CnpForecaster",
     "DEFAULT_COV_RANK",
     "find_checkpoint",
     "forecast_from_run_dir",
+    "cnp_forecast_from_zenodo",
     "infer_cnp_config",
 ]

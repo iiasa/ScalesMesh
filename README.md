@@ -127,6 +127,32 @@ out = fc.forecast(gmt, tas_context)   # gmt must cover context + horizon
 out.tas_mean                          # (H, Dy), physical units
 ```
 
+#### Pretrained checkpoints (Zenodo)
+
+A pretrained SCALES SSM checkpoint, together with its three fitted
+`StandardScaler`s, is published at
+[10.5281/zenodo.22998100](https://doi.org/10.5281/zenodo.22998100).
+`SSMForecaster.from_zenodo` downloads and caches all four files from that
+one record (model file auto-detected by its `.pt` extension; scalers by
+their `tas_scaler.out`/`gmt_scaler.out`/`pr_scaler.out` names) and builds a
+ready-to-use forecaster in one call:
+
+```python
+from scales.ssm import SSMForecaster
+
+fc = SSMForecaster.from_zenodo("10.5281/zenodo.22998100", device="cuda")
+out = fc.forecast(gmt, tas_context)   # gmt must cover context + horizon
+out.tas_mean                          # (H, Dy), physical units
+```
+
+`scales.ssm.forecast_from_zenodo` is the equivalent one-shot convenience
+wrapper (download + normalise + forecast in one call), analogous to
+`forecast_from_checkpoint`. If a Zenodo record ever uses different
+filenames, or publishes the model without scalers, pass
+`checkpoint_filename`/`tas_scaler_filename`/`gmt_scaler_filename`/`pr_scaler_filename`
+to override, or fall back to `SSMForecaster.from_checkpoint` with local
+scaler paths.
+
 To generalize across multiple ESMs, wrap a trained SSM with a CNP that
 infers an ESM embedding from a small context set:
 
@@ -140,6 +166,29 @@ model = train_cnp(DeepCnpSsmforESM(ssm_model, r_dim=128, z_cnp_dim=16),
 fc = CnpForecaster.from_run_dir("runs/cnp_v1")
 out = fc.forecast(gmt, tas_context, pr_context)
 ```
+
+#### Pretrained checkpoints (Zenodo)
+
+A pretrained SCALES CNP checkpoint, together with its three fitted
+`StandardScaler`s, is published at
+[10.5281/zenodo.22998276](https://doi.org/10.5281/zenodo.22998276).
+`CnpForecaster.from_zenodo` downloads and caches all four files from that
+one record, the same way `SSMForecaster.from_zenodo` does for the plain SSM
+(see above):
+
+```python
+from scales.ssm import CnpForecaster
+
+fc = CnpForecaster.from_zenodo("10.5281/zenodo.22998276", device="cuda")
+out = fc.forecast(gmt, tas_context, pr_context)
+```
+
+`scales.ssm.cnp_forecast_from_zenodo` (imported under that name to avoid
+clashing with the plain-SSM `forecast_from_zenodo`; it's `forecast_from_zenodo`
+inside `scales.ssm.cnp_inference` itself) is the equivalent one-shot
+convenience wrapper. As with the SSM record, pass
+`checkpoint_filename`/`tas_scaler_filename`/`gmt_scaler_filename`/`pr_scaler_filename`
+to override the expected filenames.
 
 ### MESH — spatial downscaling (`mesh`)
 
@@ -197,7 +246,30 @@ This writes an `.npz` with `tas_gen`/`pr_gen` (generated) and
 physical units, and prints a quick MAE-vs-ground-truth sanity check. The
 `--dim`/`--depth`/`--heads`/`--patch`/`--lr-patch` flags must match the
 architecture the checkpoint was trained with (they default to
-`mesh_vit_flow.main()`'s training defaults).
+`mesh_vit_flow.main()`'s training defaults). By default the EMA weights are
+used when the checkpoint has them (pass `--no-ema` for the raw weights).
+
+#### Pretrained checkpoints (Zenodo)
+
+A pretrained MESH checkpoint is published at
+[10.5281/zenodo.22959284](https://doi.org/10.5281/zenodo.22959284) --
+`--zenodo-record` fetches and caches it the same way as for SCALES:
+
+```bash
+python -m mesh.mesh_inference \
+    --zenodo-record 10.5281/zenodo.22959284 \
+    --tas-data-path /path/to/tas/ \
+    --pr-data-path /path/to/pr/ \
+    --n-samples 8 --steps 15 --sampler heun --out downscaled.npz
+```
+
+Programmatically, `mesh.mesh_inference.load_model_from_zenodo(...)` downloads
+the checkpoint and returns a ready-to-use `ViTCondDiffusionSR` in one call,
+in place of `load_model(checkpoint_path, ...)`. This particular record is a
+mid-training checkpoint (holding both the raw and EMA weights, as
+`mesh_vit_flow.train()` writes for resuming) rather than a bare
+`model_flow_ema.pt`; both checkpoint shapes are handled transparently, and
+the EMA weights are preferred by default either way.
 
 ## Testing
 
