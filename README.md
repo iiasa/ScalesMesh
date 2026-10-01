@@ -86,13 +86,13 @@ Zenodo record — no manual download needed:
 ```python
 from scales.dit import ScenarioSampler
 
-s = ScenarioSampler.from_zenodo("10.5281/zenodo.22899656", device="cuda")
+s = ScenarioSampler.from_zenodo("10.5281/zenodo.22899657", device="cuda")
 ens = s.sample(new_gmt_monthly, n_members=20)
 ```
 
 ```bash
 python -m scales.dit.inference \
-    --zenodo-record 10.5281/zenodo.22899656 \
+    --zenodo-record 10.5281/zenodo.22899657 \
     --gmt gmt_scenario.npy \
     --members 20 --out emulated.npy
 ```
@@ -276,6 +276,31 @@ the EMA weights are preferred by default either way.
 ```bash
 pytest
 ```
+
+## License
+
+SCALES-MESH is licensed under the Apache License, Version 2.0 (see
+`LICENSE`). Use of the name "SCALES-MESH" to describe results,
+publications, products or services is additionally subject to the Naming
+and Calibration Reporting Condition in `NOTICE`, which requires stating
+the software version and the version/DOI of the Official Calibration
+(model weights) used — see "Official calibrations" below for the current
+register that condition refers to.
+
+## Official calibrations
+
+These are the Official Calibrations referenced by the Naming and
+Calibration Reporting Condition in `NOTICE`. Each row is the current
+released set of model weights for that component; superseded calibrations
+will be listed underneath the component they replace, together with the
+date they were superseded.
+
+| Component | Software version | Calibration version | DOI |
+| --- | --- | --- | --- |
+| SCALES — DiT (`scales.dit`) | v1.0.0 | v1.0.0 | [10.5281/zenodo.22899657](https://doi.org/10.5281/zenodo.22899657) |
+| SCALES — SSM (`scales.ssm`) | v1.0.0 | v1.1.0 | [10.5281/zenodo.22998100](https://doi.org/10.5281/zenodo.22998100) |
+| SCALES — CNP (`scales.ssm.cnp_ssm`) | v1.0.0 | v1.1.0 | [10.5281/zenodo.22998276](https://doi.org/10.5281/zenodo.22998276) |
+| MESH (`mesh`) | 0.1.0 | v1.0.0 | [10.5281/zenodo.22959284](https://doi.org/10.5281/zenodo.22959284) |
 
 ## Layout
 

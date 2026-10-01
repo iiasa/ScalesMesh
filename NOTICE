@@ -1,0 +1,51 @@
+SCALES-MESH
+Copyright 2026 International Institute for Applied Systems Analysis (IIASA)
+
+This distribution includes software licensed under the Apache License,
+Version 2.0 (see LICENSE). This NOTICE file, and the condition below, must
+be reproduced in any distribution of the Software per Section 4(d) of that
+License.
+
+--------------------------------------------------------------------------
+
+Naming and Calibration Reporting Condition
+
+For purposes of this condition, an "Official Calibration" is a parameter
+set (in this project, a set of trained model weights) released by the
+Licensor as an official calibration of the Software, identified by a
+version number and a persistent identifier (DOI), and listed in the
+"Official calibrations" table of this repository's README
+(https://github.com/iiasa/ScalesMesh#official-calibrations). A calibration
+is "Superseded" once the Licensor has released a newer Official Calibration
+replacing it.
+
+Without limiting other conditions in the License, and consistent with
+Section 6 of the License, the name SCALES-MESH may be used to describe
+results, publications, products or services only as follows:
+
+(a) Results produced with an unmodified release of the Software and an
+    unmodified Official Calibration may be described as SCALES-MESH
+    results, provided that the Software version and the calibration
+    version and DOI are stated.
+
+(b) Results produced with an Official Calibration that was Superseded at
+    the time of publication must state the calibration (model weight)
+    version and that it has been Superseded.
+
+(c) Results produced with a modified, re-calibrated, reweighted or
+    otherwise altered parameter set, or with a modified version of the
+    Software, must not be described as SCALES-MESH results or as using an
+    Official Calibration. They may be described as "based on SCALES-MESH"
+    or "SCALES-MESH with modified calibration", together with a statement
+    of the modifications made.
+
+(d) No use of the name "SCALES-MESH" or of the Licensor's name may state or
+    imply endorsement by the Licensor of any results, modifications,
+    products or services, except with the Licensor's prior written
+    permission.
+
+This condition governs use of the name only. It does not restrict
+modification of the Software or of any calibration, which remains
+permitted under the License and the applicable calibration license. Any
+license notice or attribution required by the License must also include
+this Naming and Calibration Reporting Condition notice.
