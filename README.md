@@ -252,12 +252,12 @@ used when the checkpoint has them (pass `--no-ema` for the raw weights).
 #### Pretrained checkpoints (Zenodo)
 
 A pretrained MESH checkpoint is published at
-[10.5281/zenodo.22959284](https://doi.org/10.5281/zenodo.22959284) --
+[10.5281/zenodo.23100103](https://doi.org/10.5281/zenodo.23100103) --
 `--zenodo-record` fetches and caches it the same way as for SCALES:
 
 ```bash
 python -m mesh.mesh_inference \
-    --zenodo-record 10.5281/zenodo.22959284 \
+    --zenodo-record 10.5281/zenodo.23100103 \
     --tas-data-path /path/to/tas/ \
     --pr-data-path /path/to/pr/ \
     --n-samples 8 --steps 15 --sampler heun --out downscaled.npz
@@ -297,10 +297,10 @@ date they were superseded.
 
 | Component | Software version | Calibration version | DOI |
 | --- | --- | --- | --- |
-| SCALES — DiT (`scales.dit`) | v1.0.0 | v1.0.0 | [10.5281/zenodo.22899657](https://doi.org/10.5281/zenodo.22899657) |
-| SCALES — SSM (`scales.ssm`) | v1.0.0 | v1.1.0 | [10.5281/zenodo.22998100](https://doi.org/10.5281/zenodo.22998100) |
-| SCALES — CNP (`scales.ssm.cnp_ssm`) | v1.0.0 | v1.1.0 | [10.5281/zenodo.22998276](https://doi.org/10.5281/zenodo.22998276) |
-| MESH (`mesh`) | 0.1.0 | v1.0.0 | [10.5281/zenodo.22959284](https://doi.org/10.5281/zenodo.22959284) |
+| SCALES — DiT (`scales.dit`) | v1.0.1 | v1.0.0 | [10.5281/zenodo.22899657](https://doi.org/10.5281/zenodo.22899657) |
+| SCALES — SSM (`scales.ssm`) | v1.0.1 | v1.1.0 | [10.5281/zenodo.22998100](https://doi.org/10.5281/zenodo.22998100) |
+| SCALES — CNP (`scales.ssm.cnp_ssm`) | v1.0.1 | v1.1.0 | [10.5281/zenodo.22998276](https://doi.org/10.5281/zenodo.22998276) |
+| MESH (`mesh`) | v1.0.1 | v1.0.1 | [10.5281/zenodo.23100103](https://doi.org/10.5281/zenodo.23100103) |
 
 ## Layout
 
