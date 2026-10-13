@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import bisect
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from functools import lru_cache
 from pathlib import Path
 
@@ -78,6 +78,8 @@ class NetCDFStatsPrepper:
             den = weight.sum(("lat", "lon"))
             region_means.append((num / den).values)  # (time, region) — da's leading dim wins the broadcast
 
+        self.file_mins = all_mins  # per-file extrema, aligned with file_list
+        self.file_maxs = all_maxs
         self._min = min(all_mins)
         self._max = max(all_maxs)
         self.region_means = region_means
@@ -134,6 +136,7 @@ class NetCDFTimeDataset(Dataset):
         drop_variables: str | list[str] | None = None,
         cache_size: int = 8,  # per-worker, per-variable open-file cache
         preprocess: Callable[[xr.Dataset], xr.Dataset] | None = None,
+        esm_id: int | None = None,  # if set, __getitem__ also returns it as a long tensor
     ):
         super().__init__()
         if not vars_files:
@@ -158,6 +161,7 @@ class NetCDFTimeDataset(Dataset):
         self.chunks = chunks
         self.drop_variables = drop_variables
         self.preprocess = preprocess
+        self.esm_id = esm_id
 
         # Global time index, built from the first variable (assumes all variables
         # share the same time length within each paired file).
@@ -241,13 +245,15 @@ class NetCDFTimeDataset(Dataset):
             t = self.transform[var](t)
         return t
 
-    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, ...]:
         pair_idx, t_local = self._locate(idx)
 
         hr = torch.cat([self._hr_tensor(v, pair_idx, t_local) for v in self.vars], dim=0)
         lr = torch.cat([self._lr_tensor(v, pair_idx, t_local) for v in self.vars], dim=0)
 
         hr_scaled = TF.resize(hr, self.hr_size, interpolation=transforms.InterpolationMode.BICUBIC, antialias=True)
+        if self.esm_id is not None:
+            return lr, hr_scaled, torch.tensor(self.esm_id, dtype=torch.long)
         return lr, hr_scaled
 
 
@@ -255,26 +261,36 @@ class NetCDFTimeDataset(Dataset):
 # Convenience: discover, pair, and load a tas/pr dataset from a data directory
 # ---------------------------------------------------------------------------
 
-# Experiments this project was developed against; adjust for other models/experiments.
-_EXPERIMENTS = ("ssp585", "historical", "ssp3")
-_SSP534_INCLUDE = "ssp534"
-_SSP534_EXCLUDE = "ssp534-over_r3"
+# Defaults this project was developed against (ACCESS-ESM1-5); pass others per call.
+DEFAULT_ESM = "ACCESS-ESM1-5"
+DEFAULT_EXPERIMENTS = ("ssp585", "historical", "ssp3", "ssp534")
+DEFAULT_EXCLUDES = ("ssp534-over_r3",)
 
 
-def discover_experiment_files(data_path: str | Path, var: str) -> list[str]:
-    """List ``var`` NetCDF files for the ACCESS-ESM1-5 ssp585/historical/ssp3/ssp534
-    (excluding ssp534-over_r3) experiments this project was developed against.
+def discover_experiment_files(
+    data_path: str | Path,
+    var: str,
+    esm_name: str = DEFAULT_ESM,
+    experiments: Sequence[str] = DEFAULT_EXPERIMENTS,
+    excludes: Sequence[str] = DEFAULT_EXCLUDES,
+) -> list[str]:
+    """List ``var`` NetCDF files of ``esm_name`` for the given experiments.
+
+    A file ``{var}_Amon_{esm_name}_...`` is kept if its name contains
+    ``{var}_Amon_{esm_name}_{experiment}`` for any entry of ``experiments`` (a prefix
+    match, so ``"ssp3"`` also matches ``ssp370``) and contains none of the ``excludes``
+    substrings. Experiments with no matching file are reported on stdout and skipped,
+    so an ESM lacking some experiment does not abort the run.
     """
-    p = Path(data_path)
-    prefix = f"{var}_Amon_ACCESS-ESM1-5_"
-    files = []
-    for f in p.iterdir():
-        if not f.is_file():
-            continue
-        if any(f"{prefix}{exp}" in f.name for exp in _EXPERIMENTS):
-            files.append(str(p.absolute() / f.name))
-        elif f"{prefix}{_SSP534_INCLUDE}" in f.name and f"{prefix}{_SSP534_EXCLUDE}" not in f.name:
-            files.append(str(p.absolute() / f.name))
+    prefix = f"{var}_Amon_{esm_name}_"
+    candidates = sorted(f for f in Path(data_path).iterdir() if f.is_file() and not any(x in f.name for x in excludes))
+
+    files: list[str] = []
+    for exp in experiments:
+        matched = [f for f in candidates if f"{prefix}{exp}" in f.name]
+        if not matched:
+            print(f"[mesh_dataset] {esm_name}: no '{var}' files for experiment '{exp}' in {data_path}; skipping")
+        files.extend(str(f.absolute()) for f in matched if str(f.absolute()) not in files)
     return files
 
 
@@ -290,8 +306,15 @@ def build_tas_pr_dataset(
     tas_data_path: str | Path,
     pr_data_path: str | Path,
     hr_scale: int = 1,
+    esm_name: str = DEFAULT_ESM,
+    experiments: Sequence[str] = DEFAULT_EXPERIMENTS,
+    excludes: Sequence[str] = DEFAULT_EXCLUDES,
 ) -> tuple[NetCDFTimeDataset, dict[str, NetCDFStatsPrepper]]:
     """Discover, pair, and load matching tas/pr NetCDF files into a :class:`NetCDFTimeDataset`.
+
+    ``esm_name``, ``experiments`` and ``excludes`` select the files; see
+    :func:`discover_experiment_files`. For several ESMs with shared normalisation
+    see :func:`build_multi_esm_dataset`.
 
     Both variables are normalised to ``[-1, 1]`` using their own min/max.
 
@@ -299,11 +322,11 @@ def build_tas_pr_dataset(
     variable, so callers can invert the normalisation on model output with
     :func:`denormalize`.
     """
-    tas_files = discover_experiment_files(tas_data_path, "tas")
-    pr_files = discover_experiment_files(pr_data_path, "pr")
+    tas_files = discover_experiment_files(tas_data_path, "tas", esm_name, experiments, excludes)
+    pr_files = discover_experiment_files(pr_data_path, "pr", esm_name, experiments, excludes)
     tas_files, pr_files = pair_tas_pr_files(tas_files, pr_files)
     if not tas_files:
-        raise ValueError(f"No matching tas/pr file pairs found under {tas_data_path} / {pr_data_path}")
+        raise ValueError(f"No matching tas/pr file pairs for {esm_name} found under {tas_data_path} / {pr_data_path}")
 
     preppers = {
         "tas": NetCDFStatsPrepper(tas_files, var_name="tas"),
@@ -321,3 +344,135 @@ def build_tas_pr_dataset(
         },
     )
     return dataset, preppers
+
+
+# ---------------------------------------------------------------------------
+# Multi-ESM task dictionary (MAML/CNP-style), shared normalisation
+# ---------------------------------------------------------------------------
+
+
+def _split_runs(tas_files: list[str], support_frac: float, rng: np.random.Generator) -> tuple[list[int], list[int]]:
+    """Split paired-file indices into support/query, keeping all time chunks of one run together."""
+    groups: dict[str, list[int]] = {}
+    for i, f in enumerate(tas_files):
+        groups.setdefault(make_key(Path(f)), []).append(i)
+    keys = sorted(groups)
+    order = rng.permutation(len(keys))
+    n_support = min(max(1, int(np.floor(support_frac * len(keys)))), len(keys) - 1)
+    support = [i for k in order[:n_support] for i in groups[keys[k]]]
+    query = [i for k in order[n_support:] for i in groups[keys[k]]]
+    return sorted(support), sorted(query)
+
+
+def build_multi_esm_dataset(
+    tas_data_path: str | Path,
+    pr_data_path: str | Path,
+    esm_names: Sequence[str],
+    experiments: Sequence[str] = DEFAULT_EXPERIMENTS,
+    excludes: Sequence[str] = DEFAULT_EXCLUDES,
+    hr_scale: int = 1,
+    support_frac: float = 0.7,
+    weights: dict[str, float] | None = None,
+    fit_stats_on: str = "support",
+    seed: int = 0,
+) -> tuple[dict[str, dict], dict[str, tuple[float, float]]]:
+    """Build a task dictionary with one task per ESM, all sharing one tas/pr normalisation.
+
+    All ESMs must be on the same lat/lon grid. For each ESM the paired tas/pr files
+    are grouped by run (:func:`make_key`, i.e. experiment + member, so time chunks of
+    one run stay together) and the runs are split by a seeded shuffle into a support
+    set (``support_frac``) and a query set, each a :class:`NetCDFTimeDataset`.
+
+    ``vmax``/``vmin`` are computed once over the files of all ESMs and used for every
+    task; ``fit_stats_on`` is ``"support"`` (default, no query data enters the
+    statistics, like ``build_task_dict`` in SCALES) or ``"all"``.
+
+    ESMs without any matching tas/pr pair, or with fewer than two runs, are reported on
+    stdout and skipped. Missing experiments are reported by
+    :func:`discover_experiment_files`.
+
+    Returns:
+        tasks:  ``{esm_name: {"support": ds, "query": ds, "esm_id": int, "weight": float}}``.
+                ``esm_id`` is the index into ``esm_names`` (use ``F.one_hot`` or an
+                ``nn.Embedding``); it is stable even if an ESM in the middle is skipped.
+                Both datasets also yield the ID as a third item per sample.
+        bounds: ``{"tas": (vmax, vmin), "pr": (vmax, vmin)}`` for :func:`denormalize`.
+    """
+    if fit_stats_on not in ("support", "all"):
+        raise ValueError(f"fit_stats_on must be 'support' or 'all', got {fit_stats_on!r}")
+    weights = weights or {}
+    rng = np.random.default_rng(seed)
+
+    # ---- Pass 1: discover, pair, split, and compute region means / per-file extrema ----
+    raw: dict[str, dict] = {}
+    for esm_id, esm_name in enumerate(esm_names):
+        tas_files = discover_experiment_files(tas_data_path, "tas", esm_name, experiments, excludes)
+        pr_files = discover_experiment_files(pr_data_path, "pr", esm_name, experiments, excludes)
+        tas_files, pr_files = pair_tas_pr_files(tas_files, pr_files)
+        if not tas_files:
+            print(f"[mesh_dataset] {esm_name}: no matching tas/pr file pairs; skipping ESM")
+            continue
+        if len({make_key(Path(f)) for f in tas_files}) < 2:
+            print(f"[mesh_dataset] {esm_name}: need at least 2 runs for a support/query split; skipping ESM")
+            continue
+
+        sup_idx, qry_idx = _split_runs(tas_files, support_frac, rng)
+        preppers = {
+            "tas": NetCDFStatsPrepper(tas_files, var_name="tas"),
+            "pr": NetCDFStatsPrepper(pr_files, var_name="pr"),
+        }
+        raw[esm_name] = {
+            "files": {"tas": tas_files, "pr": pr_files},
+            "preppers": preppers,
+            "support": sup_idx,
+            "query": qry_idx,
+            "esm_id": esm_id,
+        }
+
+    if not raw:
+        raise ValueError(f"No usable ESM found among {list(esm_names)} under {tas_data_path} / {pr_data_path}")
+
+    # ---- Shared normalisation bounds across all ESMs ----
+    bounds: dict[str, tuple[float, float]] = {}
+    for var in ("tas", "pr"):
+        mins, maxs = [], []
+        for d in raw.values():
+            idx = d["support"] if fit_stats_on == "support" else range(len(d["files"][var]))
+            mins += [d["preppers"][var].file_mins[i] for i in idx]
+            maxs += [d["preppers"][var].file_maxs[i] for i in idx]
+        bounds[var] = (max(maxs), min(mins))  # (vmax, vmin)
+
+    transform = {
+        var: (lambda x, vmax=vmax, vmin=vmin: normalize(x, vmin, vmax)) for var, (vmax, vmin) in bounds.items()
+    }
+
+    # ---- Pass 2: build support/query datasets ----
+    tasks: dict[str, dict] = {}
+    ref_size: tuple[int, int] | None = None
+    for esm_name, d in raw.items():
+
+        def make(idx: list[int], d: dict = d) -> NetCDFTimeDataset:
+            return NetCDFTimeDataset(
+                vars_files={v: [d["files"][v][i] for i in idx] for v in ("tas", "pr")},
+                region_data={v: [d["preppers"][v].get_region_means()[i] for i in idx] for v in ("tas", "pr")},
+                hr_scale=hr_scale,
+                transform=transform,
+                esm_id=d["esm_id"],
+            )
+
+        support, query = make(d["support"]), make(d["query"])
+        if ref_size is None:
+            ref_size = support.hr_size
+        if support.hr_size != ref_size or query.hr_size != ref_size:
+            raise ValueError(
+                f"ESM '{esm_name}' has grid {support.hr_size}/{query.hr_size}, expected {ref_size}; "
+                "all ESMs must be on the same grid"
+            )
+        tasks[esm_name] = {
+            "support": support,
+            "query": query,
+            "esm_id": d["esm_id"],
+            "weight": float(weights.get(esm_name, 1.0)),
+        }
+
+    return tasks, bounds

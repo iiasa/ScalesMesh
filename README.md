@@ -203,6 +203,14 @@ from mesh.mesh_dataset import build_tas_pr_dataset
 dataset, preppers = build_tas_pr_dataset("/path/to/tas/", "/path/to/pr/", hr_scale=1)
 lr, hr = dataset[0]   # lr: (2, n_regions) region means; hr: (2, H, W) gridded field, both normalised
 
+# Select another ESM / experiments / filename substrings to drop (defaults: ACCESS-ESM1-5,
+# historical/ssp585/ssp3*/ssp534*, excluding ssp534-over_r3). Experiments an ESM lacks are
+# reported on stdout and skipped.
+dataset, preppers = build_tas_pr_dataset(
+    "/path/to/tas/", "/path/to/pr/",
+    esm_name="MPI-ESM1-2-LR", experiments=("historical", "ssp245", "ssp585"), excludes=("r3i1p1f1",),
+)
+
 vmax_tas, vmin_tas = preppers["tas"].get_ds_max_min()   # for mapping model output back to physical units
 ```
 

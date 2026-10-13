@@ -25,7 +25,16 @@ import torch
 import xarray as xr
 from shapely.geometry import box
 
-from mesh.mesh_dataset import NetCDFStatsPrepper, NetCDFTimeDataset, get_timerange, make_key, normalize
+from mesh.mesh_dataset import (
+    NetCDFStatsPrepper,
+    NetCDFTimeDataset,
+    build_multi_esm_dataset,
+    denormalize,
+    discover_experiment_files,
+    get_timerange,
+    make_key,
+    normalize,
+)
 
 LAT = np.array([-60.0, -20.0, 20.0, 60.0])
 LON = np.array([45.0, 135.0, 225.0, 315.0])  # indices 0,1 < 180 (West); 2,3 >= 180 (East)
@@ -237,3 +246,59 @@ class TestNetCDFTimeDataset:
                 vars_files={"tas": tas_pr_files["tas_files"], "pr": tas_pr_files["pr_files"][:1]},
                 region_data={"tas": [], "pr": []},
             )
+
+
+def test_discover_experiment_files_esm_experiments_excludes(tmp_path, capsys):
+    for name in [
+        "tas_Amon_ESM-A_historical_r1i1p1f1_gn_185001-201412.nc",
+        "tas_Amon_ESM-A_ssp370_r1i1p1f1_gn_201501-210012.nc",
+        "tas_Amon_ESM-A_ssp534-over_r3i1p1f1_gn_204001-210012.nc",
+        "tas_Amon_ESM-B_historical_r1i1p1f1_gn_185001-201412.nc",
+    ]:
+        (tmp_path / name).touch()
+
+    files = discover_experiment_files(
+        tmp_path, "tas", "ESM-A", experiments=("historical", "ssp3", "ssp585"), excludes=("ssp534-over",)
+    )
+    assert [Path(f).name for f in files] == [
+        "tas_Amon_ESM-A_historical_r1i1p1f1_gn_185001-201412.nc",
+        "tas_Amon_ESM-A_ssp370_r1i1p1f1_gn_201501-210012.nc",
+    ]
+    out = capsys.readouterr().out
+    assert "ESM-A" in out and "'ssp585'" in out and "'historical'" not in out
+
+
+def _write_esm(tmp_path: Path, esm: str, offset: float, runs: int = 3) -> None:
+    rng = np.random.default_rng(1)
+    for r in range(1, runs + 1):
+        for var, lo, hi in (("tas", 250, 260), ("pr", 0, 1)):
+            name = f"{var}_Amon_{esm}_historical_r{r}i1p1f1_gn_195001-195012.nc"
+            _write_file(tmp_path / name, var, rng.uniform(lo, hi, size=(T, 4, 4)) + (offset if var == "tas" else 0))
+
+
+def test_build_multi_esm_dataset(tmp_path, two_region_mask, capsys):
+    _write_esm(tmp_path, "ESM-A", 0.0)
+    _write_esm(tmp_path, "ESM-B", 30.0)
+
+    tasks, bounds = build_multi_esm_dataset(
+        tmp_path, tmp_path, ["ESM-A", "ESM-X", "ESM-B"], experiments=("historical", "ssp585"), weights={"ESM-B": 2.0}
+    )
+    assert "ESM-X" in capsys.readouterr().out  # skipped, reported
+    assert list(tasks) == ["ESM-A", "ESM-B"]
+    assert [tasks[e]["esm_id"] for e in tasks] == [0, 2]  # IDs follow the esm_names order
+    assert [tasks[e]["weight"] for e in tasks] == [1.0, 2.0]
+
+    for task in tasks.values():
+        assert len(task["support"].vars_files["tas"]) == 2 and len(task["query"].vars_files["tas"]) == 1
+        lr, hr, esm_id = task["support"][0]
+        assert esm_id.item() == task["esm_id"] and hr.shape[0] == 2
+
+    # Shared bounds span both ESMs' support files (ESM-B is ~30 K warmer), so normalised values stay in range.
+    vmax, vmin = bounds["tas"]
+    assert vmax > 280 and vmin < 262
+    assert denormalize(normalize(torch.tensor(270.0), vmin, vmax), vmin, vmax).item() == pytest.approx(270.0, abs=1e-3)
+
+
+def test_build_multi_esm_dataset_no_usable_esm(tmp_path, two_region_mask):
+    with pytest.raises(ValueError, match="No usable ESM"):
+        build_multi_esm_dataset(tmp_path, tmp_path, ["ESM-A"])
