@@ -28,8 +28,8 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import ConcatDataset, DataLoader
 from torch.utils.data.distributed import DistributedSampler
 
-from .mesh_dataset import DEFAULT_EXCLUDES, DEFAULT_EXPERIMENTS, build_multi_esm_dataset
-from .mesh_vit_flow import (
+from mesh.mesh_dataset import DEFAULT_EXCLUDES, DEFAULT_EXPERIMENTS, build_multi_esm_dataset
+from mesh.mesh_vit_flow import (
     FlowMatchingLinear,
     ModelEMA,
     ViTCondDiffusionSR,
